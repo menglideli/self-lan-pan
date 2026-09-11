@@ -110,12 +110,7 @@ export const adminApi = {
   tasks: () => get<any[]>('/admin/tasks'),
   shares: (page = 1, size = 50, keyword = '') => get<any>(`/admin/shares?page=${page}&size=${size}&keyword=${encodeURIComponent(keyword)}`),
   shareDelete: (id: number) => del(`/admin/shares/${id}`),
-  appToggle: (key: string, enabled: boolean) => post(`/admin/apps/${key}/toggle`, { enabled }),
-  // 系统更新
-  updateCheck: () => get<any>('/admin/update/check'),
-  updateStart: () => post<any>('/admin/update/start'),
-  updateStatus: () => get<any>('/admin/update/status'),
-  updateHistory: () => get<any[]>('/admin/update/history')
+  appToggle: (key: string, enabled: boolean) => post(`/admin/apps/${key}/toggle`, { enabled })
 }
 
 // 分块上传

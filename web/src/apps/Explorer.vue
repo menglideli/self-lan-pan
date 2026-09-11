@@ -108,7 +108,7 @@
             </div>
           </div>
         </div>
-        <div v-if="!realPolicies.length" class="empty-hint" style="position: static; margin-top: 80px">
+        <div v-if="!realPolicies.length" class="empty-hint" style="position: static; margin-top: 80px; pointer-events: auto">
           <AppIcon name="folder" :size="52" />
           <div>还没有挂载任何文件夹</div>
           <div v-if="isAdmin" style="margin-top: 16px">
@@ -392,11 +392,16 @@
             <div v-for="t in odTasks" :key="t.id" class="od-item">
               <div style="display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px">
                 <span class="od-name" :title="odTaskName(t)">{{ odTaskName(t) }}</span>
-                <span class="od-status" :style="t.status === 'error' ? 'color: var(--danger)' : t.status === 'finished' ? 'color: #2e9e5b' : ''">
-                  {{ odStatus(t.status) }}{{ t.status === 'processing' ? ' ' + t.progress + '%' : '' }}
+                <span style="display: flex; align-items: center; gap: 6px; flex: none">
+                  <span class="od-status" :style="t.status === 'error' ? 'color: var(--danger)' : t.status === 'finished' ? 'color: #2e9e5b' : ''">
+                    {{ odStatus(t.status) }}{{ t.status === 'processing' ? ' ' + t.progress + '%' : '' }}
+                  </span>
+                  <button v-if="t.status === 'queued' || t.status === 'processing'" class="btn" style="padding: 1px 7px; font-size: 11px"
+                    @click="cancelOd(t)">取消</button>
                 </span>
               </div>
               <div class="progress-track"><div class="progress-fill" :style="{ width: t.progress + '%' }"></div></div>
+              <div v-if="t.status === 'error' && t.error" class="od-err" :title="t.error">{{ t.error }}</div>
             </div>
           </div>
         </template>
@@ -512,15 +517,18 @@ const loading = ref(false)
 const selSet = ref(new Set<string>())
 const selectedDrive = ref(0)
 
-// ---- 多标签（每个标签页保存：盘符路径/搜索/视图/前进后退历史） ----
+// ---- 多标签（每个标签页保存：挂载点路径/搜索/视图/前进后退历史） ----
+// 导航历史存 (policyId, path) 二元组而非纯 path：policyId === null 表示「此电脑」根视图，
+// 这样从根视图进入挂载文件夹后，「后退」才能真正退回根视图（只存 path 无法表达回根/跨挂载点跳转）。
+interface NavEntry { policyId: number | null; path: string }
 interface Tab {
   policyId: number | null
   path: string
   keyword: string
   globalMode: boolean
   viewMode: 'grid' | 'list'
-  history: string[]
-  fwdStack: string[]
+  history: NavEntry[]
+  fwdStack: NavEntry[]
 }
 const tabs = ref<Tab[]>([])
 const activeIdx = ref(0)
@@ -542,8 +550,8 @@ const viewMode = computed<'grid' | 'list'>({
   get: () => activeTab.value?.viewMode ?? 'grid',
   set: v => { if (activeTab.value) activeTab.value.viewMode = v }
 })
-const history = computed<string[]>(() => activeTab.value?.history ?? [])
-const fwdStack = computed<string[]>(() => activeTab.value?.fwdStack ?? [])
+const history = computed<NavEntry[]>(() => activeTab.value?.history ?? [])
+const fwdStack = computed<NavEntry[]>(() => activeTab.value?.fwdStack ?? [])
 
 function addTab(policyId: number | null = null, p = '/') {
   tabs.value.push({ policyId, path: p, keyword: '', globalMode: false, viewMode: 'grid', history: [], fwdStack: [] })
@@ -622,12 +630,32 @@ onMounted(async () => {
     addTab(null, '/')
   }
   window.addEventListener('cp-refresh-explorer', onRefreshEvent)
+  window.addEventListener('cp-policies-changed', onPoliciesChanged)
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('cp-refresh-explorer', onRefreshEvent)
+  window.removeEventListener('cp-policies-changed', onPoliciesChanged)
   window.removeEventListener('keydown', onKey)
 })
+
+// 挂载列表在别处（管理控制台 / 其他窗口）发生变化时重新拉取，无需关闭页面重开。
+// 若当前正在浏览的挂载点已被卸载，退回「此电脑」根视图，避免停在已不存在的挂载上。
+async function onPoliciesChanged() {
+  await loadPolicies()
+  const t = activeTab.value
+  if (t && t.policyId !== null && !policies.value.some(p => p.id === t.policyId)) {
+    t.policyId = null
+    t.path = '/'
+    t.keyword = ''
+    t.history.length = 0
+    t.fwdStack.length = 0
+    items.value = []
+    searching.value = false
+    selSet.value = new Set()
+    store.setTitle(props.winId, '文件资源管理器')
+  }
+}
 
 function onRefreshEvent(e: any) {
   if (!currentPolicy.value) return
@@ -803,32 +831,58 @@ function openPolicy(p: Policy) { openPolicyId(p.id, '/') }
 function openPolicyId(pid: number, p: string) {
   const pol = policies.value.find(x => x.id === pid)
   if (!pol) return
-  if (!activeTab.value) addTab(pid, p)
-  activeTab.value.policyId = pid
-  pushHistory(p)
-  path.value = p
-  keyword.value = ''
+  if (!activeTab.value) { addTab(pid, p); return }
+  const t = activeTab.value
+  if (t.policyId === pid && t.path === p) { load(); return }
+  pushHistory()
+  t.policyId = pid
+  t.path = p
+  t.keyword = ''
   load()
 }
-function pushHistory(p: string) {
+// 记录「来处」：把当前 (policyId, path) 压入后退栈并清空前进栈。
+// 必须在修改 tab.policyId / tab.path 之前调用，否则会把目标路径当成来处（后退点不动即源于此）。
+function pushHistory() {
   const t = activeTab.value
-  t.history.push(p)
+  if (!t) return
+  const cur: NavEntry = { policyId: t.policyId, path: t.path }
+  const last = t.history[t.history.length - 1]
+  if (last && last.policyId === cur.policyId && last.path === cur.path) return
+  t.history.push(cur)
   if (t.history.length > 60) t.history.shift()
   t.fwdStack.length = 0
 }
-function back() {
-  if (!history.value.length) return
-  const cur = history.value.pop()!
-  fwdStack.value.push(path.value)
-  path.value = cur
+// 应用一条历史记录（后退/前进共用）：切回对应挂载点与路径并重新加载
+function applyNav(e: NavEntry) {
+  const t = activeTab.value
+  if (!t) return
+  t.policyId = e.policyId
+  t.path = e.path
+  t.keyword = ''
+  selSet.value = new Set()
+  if (e.policyId === null) {
+    // 退回「此电脑」根视图：无需请求目录列表
+    items.value = []
+    searching.value = false
+    store.setTitle(props.winId, '文件资源管理器')
+    return
+  }
   load()
+  loadStars()
+}
+function back() {
+  const t = activeTab.value
+  if (!t || !t.history.length) return
+  const prev = t.history.pop()!
+  t.fwdStack.push({ policyId: t.policyId, path: t.path })
+  applyNav(prev)
 }
 function fwd() {
-  if (!fwdStack.value.length) return
-  const next = fwdStack.value.pop()!
-  history.value.push(path.value)
-  path.value = next
-  load()
+  const t = activeTab.value
+  if (!t || !t.fwdStack.length) return
+  const next = t.fwdStack.pop()!
+  t.history.push({ policyId: t.policyId, path: t.path })
+  applyNav(next)
 }
 function goUp() {
   if (path.value === '/') return
@@ -836,9 +890,10 @@ function goUp() {
   goto(up)
 }
 function goto(p: string) {
-  if (!currentPolicy.value) return
-  pushHistory(p)
+  if (!currentPolicy.value || p === path.value) return
+  pushHistory()
   path.value = p
+  keyword.value = ''
   load()
 }
 
@@ -1368,8 +1423,21 @@ function offlineDlg() {
 }
 watch(odShow, v => { if (!v) clearInterval(odTimer) })
 onBeforeUnmount(() => clearInterval(odTimer))
+// 已提示/已处理的「已完成」任务 id，避免 2s 轮询反复刷新；odPrimed 让首次加载只做基线不刷新
+const odNotified = new Set<number>()
+let odPrimed = false
 async function loadOdTasks() {
-  try { odTasks.value = (await aget('/offline')).slice(0, 8) } catch {}
+  try {
+    const list: any[] = (await aget('/offline')).slice(0, 8)
+    // 任务刚完成时自动刷新当前目录：否则离线下载好的文件不会出现在列表里，用户会以为「没下下来」
+    let needRefresh = false
+    for (const t of list) {
+      if (t.status === 'finished' && !odNotified.has(t.id)) { odNotified.add(t.id); needRefresh = true }
+    }
+    odTasks.value = list
+    if (needRefresh && odPrimed && currentPolicy.value && !keyword.value) { load(); loadStars() }
+    odPrimed = true
+  } catch { /* 轮询中的网络抖动忽略 */ }
 }
 async function addOffline() {
   if (!odUrl.value || !currentPolicy.value) return
@@ -1840,6 +1908,7 @@ function fmtTime(ms: number) {
 .od-item:last-child { border-bottom: none; }
 .od-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
 .od-status { font-size: 12px; color: var(--text-3); flex: none; }
+.od-err { font-size: 11.5px; color: var(--danger, #e84c3d); margin-top: 5px; word-break: break-all; line-height: 1.5; }
 .file-list thead th { user-select: none; white-space: nowrap; }
 .file-list thead th:hover { color: var(--text); background: var(--hover-b); }
 .file-list thead th.sort-active { color: var(--theme-2); }

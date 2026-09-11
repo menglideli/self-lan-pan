@@ -39,8 +39,9 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 // ---- 存储策略 ----
 
 type policyIn struct {
-	Name     string            `json:"name" binding:"required"`
-	Letter   string            `json:"letter" binding:"required"`
+	Name string `json:"name" binding:"required"`
+	// Letter 可选：单用户私有部署下前端不再让用户填盘符，留空由后端自动生成（见 genPolicyLetter）
+	Letter   string            `json:"letter"`
 	Type     string            `json:"type" binding:"required"`
 	RootPath string            `json:"rootPath"`
 	Options  map[string]string `json:"options"`
@@ -72,7 +73,12 @@ func (h *AdminHandler) PolicyCreate(c *gin.Context) {
 	if in.Options != nil {
 		opts = marshalOpts(in.Options)
 	}
-	p := model.Policy{Name: in.Name, Letter: in.Letter, Type: in.Type, RootPath: in.RootPath, Options: opts, CreatedBy: u.ID}
+	// 盘符留空 = 由后端生成唯一标识（前端「挂载文件夹」不再暴露该字段）
+	letter := strings.TrimSpace(in.Letter)
+	if letter == "" {
+		letter = genPolicyLetter(in.Name)
+	}
+	p := model.Policy{Name: in.Name, Letter: letter, Type: in.Type, RootPath: in.RootPath, Options: opts, CreatedBy: u.ID}
 	if in.Type == "local" {
 		if in.RootPath == "" {
 			dto.Fail(c, 400, "本地存储必须填写根目录")
@@ -89,6 +95,18 @@ func (h *AdminHandler) PolicyCreate(c *gin.Context) {
 				dto.Fail(c, 400, "根目录必须是绝对路径（如 /data/storage）")
 				return
 			}
+		}
+		// 单用户私有部署：挂载的是「已有的本机文件夹」，不是预先规划的新存储目录。
+		// 原实现只调 fscore.NewLocal → os.MkdirAll，会把打错的路径静默建成空目录，
+		// 用户在网盘里看到一个空挂载点却不知道文件去哪了；这里要求目录必须已存在。
+		st, err := os.Stat(in.RootPath)
+		if err != nil {
+			dto.Fail(c, 400, "目录不存在或无法访问："+err.Error())
+			return
+		}
+		if !st.IsDir() {
+			dto.Fail(c, 400, "所选路径不是文件夹")
+			return
 		}
 		if _, err := fscore.NewLocal(in.RootPath); err != nil {
 			dto.Fail(c, 400, "根目录不可用："+err.Error())
@@ -123,8 +141,13 @@ func (h *AdminHandler) PolicyUpdate(c *gin.Context) {
 	if in.Options != nil {
 		opts = marshalOpts(in.Options)
 	}
+	// 盘符留空 = 保持原值（它是 WebDAV 的路径段，前端编辑时不再展示，不能被清空）
+	letter := strings.TrimSpace(in.Letter)
+	if letter == "" {
+		letter = p.Letter
+	}
 	model.DB.Model(&p).Updates(map[string]interface{}{
-		"name": in.Name, "letter": in.Letter, "root_path": in.RootPath, "options": opts,
+		"name": in.Name, "letter": letter, "root_path": in.RootPath, "options": opts,
 		"status": orDefault(c.Query("status"), p.Status),
 	})
 	h.Site.Fs.Invalidate(p.ID)

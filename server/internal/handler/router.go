@@ -143,6 +143,8 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 
 		// 单用户私有部署：用户管理与用户组管理端点已移除（只有管理员一个账号）
 		ag.GET("/policies", ad.PolicyList)
+		// 本机目录浏览：「挂载文件夹」的目录选择器数据源（仅管理员；按用户要求不设白名单）
+		ag.GET("/fs/dirs", ad.BrowseDirs)
 		ag.POST("/policies", ad.PolicyCreate)
 		ag.PUT("/policies/:id", ad.PolicyUpdate)
 		ag.PUT("/policies/:id/status", ad.PolicyToggle)

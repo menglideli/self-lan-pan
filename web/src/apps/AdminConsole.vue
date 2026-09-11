@@ -103,7 +103,7 @@
             <div class="ac-row-title">存储概览</div>
             <div v-for="p in policies" :key="p.id" style="margin: 12px 0">
               <div style="display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 6px">
-                <span style="font-weight: 600">{{ p.name }} ({{ p.letter }})</span>
+                <span style="font-weight: 600">{{ p.name }}</span>
                 <span style="color: var(--text-3)">{{ fmt(p.usageBytes) }} 已用 · {{ typeName(p.type) }}</span>
               </div>
               <div class="ac-progress"><div class="ac-progress-fill" :style="{ width: Math.max(3, Math.min(100, p.usageBytes / ((1<<30)*10) * 100)) + '%' }"></div></div>
@@ -117,16 +117,15 @@
         <!-- 存储策略 -->
         <template v-else-if="tab === 'policies'">
           <div class="ac-head">
-            <h2 class="ac-h2">存储策略 / 磁盘挂载</h2>
+            <h2 class="ac-h2">挂载管理</h2>
             <button class="btn primary" @click="newPolicy"><AppIcon name="plus" :size="15" />挂载存储</button>
           </div>
           <div class="ac-card" style="padding: 4px 0">
             <table class="ac-table">
-              <thead><tr><th>盘符</th><th>名称</th><th>类型</th><th>根目录 / 状态</th><th>用量</th><th style="width: 240px">操作</th></tr></thead>
+              <thead><tr><th>名称</th><th>类型</th><th>根目录 / 状态</th><th>用量</th><th style="width: 240px">操作</th></tr></thead>
               <tbody>
                 <tr v-for="p in policies" :key="p.id">
-                  <td class="ac-strong">{{ p.letter }}:</td>
-                  <td>{{ p.name }}</td>
+                  <td class="ac-strong">{{ p.name }}</td>
                   <td><span class="ac-tag" :class="{ admin: p.type !== 'local' }">{{ typeName(p.type) }}</span></td>
                   <td>
                     <div style="font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis" :title="p.rootPath || ''">{{ p.rootPath || p.statusMsg || '-' }}</div>
@@ -142,7 +141,7 @@
                 </tr>
               </tbody>
             </table>
-            <div v-if="!policies.length" style="padding: 24px; text-align: center; color: var(--text-3); font-size: 13px">点击右上角「挂载存储」把服务器目录或云盘挂到此电脑</div>
+            <div v-if="!policies.length" style="padding: 24px; text-align: center; color: var(--text-3); font-size: 13px">点击右上角「挂载存储」把本机目录或云盘加进网盘（也可在文件管理器里点「挂载文件夹」）</div>
           </div>
         </template>
 
@@ -429,11 +428,10 @@
             <option value="tianyi">天翼云盘（实验性，粘贴 Cookie）</option>
           </select>
         </div>
-        <div class="row"><label>显示名称</label><input class="input" v-model="editPolicy.name" placeholder="如：我的阿里云盘" style="width: 100%" /></div>
-        <div class="row"><label>虚拟盘符</label><input class="input" v-model="editPolicy.letter" placeholder="C / D / X / 阿里 ..." style="width: 100%" /></div>
+        <div class="row"><label>显示名称</label><input class="input" v-model="editPolicy.name" placeholder="如：电影 / 我的云盘" style="width: 100%" /></div>
         <div class="row" v-if="editPolicy.type === 'local'">
-          <label>服务器上的物理目录</label>
-          <input class="input" v-model="editPolicy.rootPath" placeholder="如 E:\cloudpan\storage" style="width: 100%" />
+          <label>本机目录</label>
+          <input class="input" v-model="editPolicy.rootPath" placeholder="如 E:\媒体\电影（也可在文件管理器里点「挂载文件夹」用选择器挑）" style="width: 100%" />
         </div>
         <template v-if="editPolicy.type === 'pan123'">
           <div class="row"><label>ClientID（123 开放平台）</label><input class="input" v-model="pOpts.client_id" style="width: 100%" /></div>

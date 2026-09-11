@@ -73,65 +73,59 @@
           <AppIcon name="starFill" :size="15" /><span>{{ s.name }}</span>
         </div>
         <div v-if="!stars.length" class="side-item" style="color: var(--text-3)">收藏的目录会显示在这里</div>
-        <div class="side-title" style="margin-top: 10px">此电脑</div>
+        <div class="side-title" style="margin-top: 10px">已挂载的文件夹</div>
         <div v-for="p in realPolicies" :key="p.id" class="side-item" :class="{ active: currentPolicy && currentPolicy.id === p.id }"
-          @click="openPolicy(p)">
-          <AppIcon :name="p.type === 'local' ? 'drive' : 'cloud'" :size="16" />
+          @click="openPolicy(p)" :title="p.rootPath || p.name">
+          <AppIcon :name="p.type === 'local' ? 'folder' : 'cloud'" :size="16" />
           <span style="flex: 1">{{ p.name }}</span>
-          <span style="font-size: 10.5px; color: var(--text-3)">{{ p.letter }}</span>
         </div>
       </div>
 
-      <!-- 主区：此电脑视图 -->
+      <!-- 主区：根视图 = 已挂载的文件夹（单用户私有部署：不显示盘符，直接列挂载点） -->
       <div v-if="!currentPolicy" style="flex: 1; overflow: auto; padding: 14px 22px">
-        <template v-if="localPolicies.length">
-          <div class="sec-title">设备和驱动器 ({{ localPolicies.length }})</div>
-          <div class="drive-grid">
-            <div v-for="p in localPolicies" :key="p.id" class="drive-card" :class="{ sel: selectedDrive === p.id }"
-              @click="selectedDrive = p.id" @dblclick="openPolicy(p)"
-              @contextmenu.stop.prevent="onPolicyCtx(p, $event)">
-              <AppIcon :name="p.type === 'local' ? 'drive' : 'cloud'" :size="54" />
-              <div style="flex: 1; min-width: 0">
-                <div class="drive-name" :title="p.name">{{ p.name }} ({{ p.letter }})</div>
-                <div class="drive-bar">
-                  <div class="drive-bar-fill" :class="{ full: usagePct(p) > 88 }" :style="{ width: Math.max(3, usagePct(p)) + '%' }"></div>
-                </div>
-                <div class="drive-sub">{{ fmt(p.usageBytes) }} 已用</div>
-              </div>
+        <div v-if="realPolicies.length" style="display: flex; align-items: center; margin-bottom: 10px">
+          <div class="sec-title" style="flex: 1; margin: 0">已挂载的文件夹 ({{ realPolicies.length }})</div>
+          <button v-if="isAdmin" class="btn primary" style="padding: 5px 12px" @click="openMount()">
+            <AppIcon name="plus" :size="14" />挂载文件夹
+          </button>
+        </div>
+        <div v-if="realPolicies.length" class="drive-grid">
+          <div v-for="p in realPolicies" :key="p.id" class="drive-card" :class="{ sel: selectedDrive === p.id }"
+            @click="selectedDrive = p.id" @dblclick="openPolicy(p)"
+            @contextmenu.stop.prevent="onPolicyCtx(p, $event)">
+            <AppIcon :name="p.type === 'local' ? 'folder' : 'cloud'" :size="46" />
+            <div style="flex: 1; min-width: 0">
+              <div class="drive-name" :title="p.name">{{ p.name }}</div>
+              <div class="drive-sub ellip" :title="p.rootPath || ''">{{ p.type === 'local' ? (p.rootPath || '本地目录') : '云盘存储' }}</div>
+              <div class="drive-sub" style="margin-top: 3px">{{ fmt(p.usageBytes) }} 已用</div>
             </div>
           </div>
-        </template>
-        <template v-if="cloudPolicies.length">
-          <div class="sec-title" style="margin-top: 18px">云盘 ({{ cloudPolicies.length }})</div>
-          <div class="drive-grid">
-            <div v-for="p in cloudPolicies" :key="p.id" class="drive-card" :class="{ sel: selectedDrive === p.id }"
-              @click="selectedDrive = p.id" @dblclick="openPolicy(p)"
-              @contextmenu.stop.prevent="onPolicyCtx(p, $event)">
-              <AppIcon name="cloud" :size="48" />
-              <div style="flex: 1; min-width: 0">
-                <div class="drive-name" :title="p.name">{{ p.name }} ({{ p.letter }})</div>
-                <div class="drive-bar">
-                  <div class="drive-bar-fill" :class="{ full: usagePct(p) > 88 }" :style="{ width: Math.max(3, usagePct(p)) + '%' }"></div>
-                </div>
-                <div class="drive-sub">{{ fmt(p.usageBytes) }} 已用</div>
-              </div>
+          <div v-if="isAdmin" class="drive-card add" @click="openMount()">
+            <AppIcon name="plus" :size="30" />
+            <div style="flex: 1; min-width: 0">
+              <div class="drive-name">挂载文件夹</div>
+              <div class="drive-sub">把本机目录加到网盘</div>
             </div>
           </div>
-        </template>
+        </div>
         <div v-if="!realPolicies.length" class="empty-hint" style="position: static; margin-top: 80px">
-          <AppIcon name="drive" :size="52" />
-          <div>暂未挂载任何存储，请联系管理员在管理控制台挂载</div>
+          <AppIcon name="folder" :size="52" />
+          <div>还没有挂载任何文件夹</div>
+          <div v-if="isAdmin" style="margin-top: 16px">
+            <button class="btn primary" @click="openMount()"><AppIcon name="plus" :size="15" />挂载文件夹</button>
+          </div>
+          <div v-else style="font-size: 12.5px; color: var(--text-3); margin-top: 6px">请联系管理员挂载本机目录</div>
         </div>
       </div>
 
       <!-- 主区：文件列表视图 -->
       <div v-else ref="fileArea" style="flex: 1; position: relative; overflow: hidden" @mousedown="onAreaMouseDown">
         <div v-if="viewMode === 'grid'" class="file-grid">
-          <div v-for="f in sortedItems" :key="f.path + (f.letter || '')" class="file-item" :class="{ selected: selSet.has(f.path) }" :data-path="f.path"
+          <div v-for="f in sortedItems" :key="f.path" class="file-item" :class="{ selected: selSet.has(f.path) }" :data-path="f.path"
             @mousedown="onItemDown(f, $event)" @dblclick="openItem(f)" @contextmenu.stop.prevent="onItemCtx(f, $event)"
             @dragstart="onItemDrag(f, $event)" @dragover.prevent @drop.prevent.stop="onDropTo(f, $event)">
             <input type="checkbox" class="f-check" :checked="selSet.has(f.path)" @mousedown.stop.prevent @click.stop="toggleCheck(f)" :title="selSet.has(f.path) ? '取消选择' : '选择'" />
-            <span v-if="(f as any).letter" class="g-badge">{{ (f as any).letter }}</span>
+            <span v-if="(f as any).policyName" class="g-badge" :title="(f as any).policyName">{{ (f as any).policyName }}</span>
             <div class="f-ico">
               <img v-if="isThumb(f)" :src="thumbUrl(f)" class="f-thumb" draggable="false" />
               <AppIcon v-else :name="iconOf(f)" :size="46" />
@@ -209,6 +203,51 @@
 
     <input ref="fileInput" type="file" multiple style="display: none" @change="onFilePicked" />
     <input ref="folderInput" type="file" webkitdirectory style="display: none" @change="onFilePicked" />
+
+    <!-- 挂载本机文件夹对话框（仅管理员）：浏览器式挑目录，确认即挂载 -->
+    <div class="dialog-mask" v-if="mountShow" @click.self="mountShow = false">
+      <div class="dialog" style="width: 580px">
+        <h3>挂载本机文件夹</h3>
+        <div class="row">
+          <label>挂载名称（在网盘里的显示名）</label>
+          <input class="input" v-model="mountName" placeholder="如：电影" style="width: 100%" />
+        </div>
+        <div class="row">
+          <label>要挂载的本机文件夹</label>
+          <div class="mount-path">{{ mountPath || '点进下面任意一个盘符 / 目录' }}</div>
+        </div>
+        <div class="mount-browser">
+          <div class="mount-crumbs">
+            <span class="mount-crumb" @click="browseDirs('')">此电脑</span>
+            <template v-for="(seg, i) in mountCrumbs" :key="i">
+              <span class="mount-sep">›</span>
+              <span class="mount-crumb" @click="browseDirs(mountCrumbPath(i))">{{ seg }}</span>
+            </template>
+          </div>
+          <div v-if="mountBusy" class="mount-empty">读取中…</div>
+          <div v-else-if="mountErr" class="mount-err">{{ mountErr }}</div>
+          <div v-else class="mount-list">
+            <div v-if="mountParent" class="mount-row up" @click="browseDirs(mountParent)">
+              <AppIcon name="up" :size="15" /><span>上一级</span>
+            </div>
+            <div v-for="r in mountRoots" :key="r" class="mount-row" @click="browseDirs(r)">
+              <AppIcon name="drive" :size="16" /><span>{{ r }}</span>
+            </div>
+            <div v-for="d in mountDirs" :key="d.path" class="mount-row" @click="browseDirs(d.path)">
+              <AppIcon name="folder" :size="16" /><span>{{ d.name }}</span>
+            </div>
+            <div v-if="!mountDirs.length && !mountRoots.length && !mountParent" class="mount-empty">这个目录下没有子文件夹</div>
+          </div>
+        </div>
+        <div style="font-size: 11.5px; color: var(--text-3); margin-bottom: 10px">
+          点目录名进入下一层；底部按钮把「本机文件夹」里显示的路径挂到网盘。只建立映射，不会移动或复制文件。
+        </div>
+        <div class="actions">
+          <button class="btn" @click="mountShow = false">取消</button>
+          <button class="btn primary" :disabled="mountBusy || !mountPath" @click="doMount">挂载此文件夹</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 分享对话框 -->
     <div class="dialog-mask" v-if="shareShow" @click.self="shareShow = false">
@@ -442,7 +481,7 @@ import { useAppState } from '../stores/appstate'
 import { canUseOffline } from '../stores/apps'
 import { useClipboard } from '../stores/ui'
 import { useTransfer } from '../stores/transfer'
-import { fsApi, shareApi, type Policy, type FileItem } from '../api/modules'
+import { fsApi, shareApi, adminApi, type Policy, type FileItem } from '../api/modules'
 import { rawUrl, downloadUrl } from '../api/modules'
 import { get as aget, post as apost, del as adel } from '../api/http'
 import { useContextMenu } from '../stores/ui'
@@ -528,8 +567,8 @@ function closeTab(i: number) {
 function tabTitle(t: Tab): string {
   const p = policies.value.find(x => x.id === t.policyId)
   if (!p) return '此电脑'
-  if (t.path === '/') return `${p.name} (${p.letter})`
-  return t.path.slice(t.path.lastIndexOf('/') + 1) || p.letter
+  if (t.path === '/') return p.name
+  return t.path.slice(t.path.lastIndexOf('/') + 1) || p.name
 }
 // 排序（Windows 逻辑：文件夹永远在前，列头可点击切换方向）
 const sortMode = ref<'name' | 'size' | 'modTime' | 'type'>('name')
@@ -554,9 +593,6 @@ const sortedItems = computed(() => {
   })
   return arr
 })
-
-const localPolicies = computed(() => policies.value.filter(p => p.type === 'local'))
-const cloudPolicies = computed(() => policies.value.filter(p => p.type !== 'local'))
 
 const fileInput = ref<HTMLInputElement>()
 const folderInput = ref<HTMLInputElement>()
@@ -673,6 +709,8 @@ const realPolicies = computed(() => policies.value)
 
 // 只读用户组：自己的盘禁止写；管理员豁免
 const readOnly = computed(() => !!perms.value.readOnly && session.user?.role !== 'admin')
+// 管理员：挂载/卸载等存储管理入口仅管理员可见（单用户私有部署下恒为 true）
+const isAdmin = computed(() => session.user?.role === 'admin')
 const canWriteHere = computed(() => {
   if (!currentPolicy.value) return false
   return !readOnly.value
@@ -684,6 +722,81 @@ const canVersion = computed(() => apps.isAvailable('version'))
 
 async function loadStars() {
   try { stars.value = await fsApi.starList() } catch { stars.value = [] }
+}
+
+// ---- 挂载本机文件夹（仅管理员；从文件管理器直接挑目录，无需进管理台） ----
+const mountShow = ref(false)
+const mountName = ref('')       // 挂载名称（用户在网盘里看到的名字）
+const mountPath = ref('')       // 目录选择器当前浏览到的本机绝对路径（'' = 根/盘符列表）
+const mountDirs = ref<{ name: string; path: string }[]>([])
+const mountRoots = ref<string[]>([])  // 根列表（Windows = 各盘符；其他系统 = /）
+const mountParent = ref('')     // 上级目录（'' = 已在顶层）
+const mountBusy = ref(false)
+const mountErr = ref('')
+
+function localBase(p: string): string {
+  const s = p.replace(/[\\/]+$/, '')
+  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'))
+  return i >= 0 ? s.slice(i + 1) : s
+}
+
+async function browseDirs(p = '') {
+  mountBusy.value = true
+  mountErr.value = ''
+  try {
+    const d = await adminApi.browseDirs(p)
+    mountPath.value = d.path || ''
+    mountParent.value = d.parent || ''
+    mountDirs.value = d.dirs || []
+    mountRoots.value = d.roots || []
+  } catch (e: any) {
+    mountErr.value = e.message || '读取目录失败'
+    mountDirs.value = []
+    mountRoots.value = []
+  } finally { mountBusy.value = false }
+}
+
+function openMount() {
+  mountName.value = ''
+  mountPath.value = ''
+  mountDirs.value = []
+  mountRoots.value = []
+  mountParent.value = ''
+  mountErr.value = ''
+  mountShow.value = true
+  browseDirs('')
+}
+
+// 进入子目录：名称还没填过时，默认用目录名当挂载名
+function mountEnter(dirPath: string) {
+  if (!mountName.value.trim()) mountName.value = localBase(dirPath)
+  browseDirs(dirPath)
+}
+
+async function doMount() {
+  if (!mountPath.value) { toast.error('请先选择一个本机文件夹（点进要挂载的目录）'); return }
+  const name = mountName.value.trim() || localBase(mountPath.value)
+  mountBusy.value = true
+  try {
+    await adminApi.policyCreate({ type: 'local', name, letter: '', rootPath: mountPath.value })
+    toast.success(`已挂载「${name}」`)
+    mountShow.value = false
+    await loadPolicies()
+  } catch (e: any) { toast.error(e.message) } finally { mountBusy.value = false }
+}
+
+// 目录选择器面包屑（同时兼容 Windows 盘符路径与 POSIX 路径）
+const mountCrumbs = computed(() => {
+  const p = mountPath.value
+  if (!p) return [] as string[]
+  if (/^[A-Za-z]:/.test(p)) return p.split(/[\\/]+/).filter(Boolean)
+  return p.split('/').filter(Boolean)
+})
+function mountCrumbPath(i: number): string {
+  const p = mountPath.value
+  const parts = mountCrumbs.value.slice(0, i + 1)
+  if (/^[A-Za-z]:/.test(p)) return parts.join('\\') + (parts.length === 1 ? '\\' : '')
+  return '/' + parts.join('/')
 }
 
 function openPolicy(p: Policy) { openPolicyId(p.id, '/') }
@@ -737,7 +850,7 @@ async function load() {
   try {
     const d = await fsApi.list(currentPolicy.value.id, path.value)
     items.value = d.items
-    store.setTitle(props.winId, `${currentPolicy.value.name} (${currentPolicy.value.letter})${path.value === '/' ? '' : ' - ' + path.value}`)
+    store.setTitle(props.winId, `${currentPolicy.value.name}${path.value === '/' ? '' : ' - ' + path.value}`)
   } catch (e: any) {
     items.value = []
     store.setTitle(props.winId, '文件资源管理器')
@@ -1628,9 +1741,22 @@ function onPolicyCtx(p: Policy, e: MouseEvent) {
   const menu: any[] = [
     { label: '打开', icon: 'fwd', onClick: () => openPolicy(p) }
   ]
-  if (session.user?.role === 'admin') {
+  if (isAdmin.value) {
     menu.push({ separator: true })
-    menu.push({ label: '管理存储', icon: 'admin', onClick: () => store.open('admin') })
+    menu.push({ label: '挂载文件夹…', icon: 'plus', onClick: () => openMount() })
+    menu.push({ label: '编辑此挂载', icon: 'admin', onClick: () => store.open('admin') })
+    menu.push({
+      label: '卸载', icon: 'trash',
+      onClick: async () => {
+        const ok = await uiDlg.confirm('卸载挂载', `确定把「${p.name}」从网盘移除？只移除挂载，不会删除本机目录里的文件。`, { danger: true, okText: '卸载' })
+        if (!ok) return
+        try {
+          await adminApi.policyDelete(p.id)
+          toast.success('已卸载')
+          await loadPolicies()
+        } catch (e: any) { toast.error(e.message) }
+      }
+    })
   }
   ctx.show(e.clientX, e.clientY, menu)
 }
@@ -1644,7 +1770,6 @@ async function toggleStar(f: FileItem) {
 // ---- 工具 ----
 function joinPath(a: string, b: string) { return (a === '/' ? '' : a) + '/' + b }
 function baseName(p: string) { return p.slice(p.lastIndexOf('/') + 1) }
-function usagePct(p: Policy) { return Math.min(100, Math.round((p.usageBytes / ((1 << 30) * 10)) * 100)) }
 function fmt(n: number) {
   if (n > 1 << 30) return (n / (1 << 30)).toFixed(2) + ' GB'
   if (n > 1 << 20) return (n / (1 << 20)).toFixed(1) + ' MB'
@@ -1744,14 +1869,35 @@ function fmtTime(ms: number) {
   font-size: 13.5px; font-weight: 600; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.drive-bar { height: 6px; border-radius: 3px; background: rgba(125,125,135,0.28); margin: 9px 0 6px; overflow: hidden; }
-.dark .drive-bar { background: rgba(255,255,255,0.14); }
-.drive-bar-fill {
-  height: 100%; border-radius: 3px;
-  background: linear-gradient(90deg, var(--theme-1), var(--theme-2));
-  transition: width 0.3s;
-}
-.drive-bar-fill.full { background: #e74c3c; }
 .drive-sub { font-size: 11px; color: var(--text-3); }
+.ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 「挂载文件夹」虚线卡片（管理员可见） */
+.drive-card.add { border-style: dashed; cursor: pointer; }
+.drive-card.add .drive-name { color: var(--text-3); font-weight: 500; }
+.drive-card.add .drive-sub { color: var(--text-3); }
+
+/* 挂载对话框：本机目录选择器 */
+.mount-path {
+  font-size: 12.5px; padding: 7px 10px; border-radius: 6px;
+  background: var(--bg50); border: 1px solid var(--stroke-b);
+  color: var(--text); word-break: break-all;
+}
+.mount-browser {
+  height: 236px; display: flex; flex-direction: column;
+  border: 1px solid var(--stroke-b); border-radius: 8px; overflow: hidden; margin-bottom: 10px;
+}
+.mount-crumbs {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 7px 10px;
+  border-bottom: 1px solid var(--stroke); background: var(--bg50); font-size: 12px;
+}
+.mount-crumb { cursor: pointer; padding: 1px 5px; border-radius: 4px; color: var(--theme-2); }
+.mount-crumb:hover { background: var(--hover-b); }
+.mount-sep { color: var(--text-3); }
+.mount-list { flex: 1; overflow: auto; padding: 4px; }
+.mount-row { display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.mount-row:hover { background: var(--hover-b); }
+.mount-row.up { color: var(--text-3); }
+.mount-empty { padding: 22px; text-align: center; color: var(--text-3); font-size: 12.5px; }
+.mount-err { padding: 22px; text-align: center; color: #e05a5a; font-size: 12.5px; }
 </style>
 /* ZTESTMARKERQWX 9f3a */

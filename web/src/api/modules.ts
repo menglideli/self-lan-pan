@@ -95,6 +95,8 @@ export const adminApi = {
   dashboard: () => get<any>('/admin/dashboard'),
   system: () => get<any>('/admin/system'),
   policies: () => get<Policy[]>('/admin/policies'),
+  // 本机目录浏览（「挂载文件夹」的目录选择器）：不传 path 返回盘符 / 根列表
+  browseDirs: (path = '') => get<{ path: string; parent: string; dirs: { name: string; path: string }[]; roots: string[] }>(`/admin/fs/dirs?path=${encodeURIComponent(path)}`),
   policyCreate: (d: any) => post('/admin/policies', d),
   policyUpdate: (id: number, d: any) => put(`/admin/policies/${id}`, d),
   policyToggle: (id: number, status: string) => put(`/admin/policies/${id}/status`, { status }),

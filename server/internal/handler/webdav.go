@@ -41,6 +41,8 @@ var (
 	errDavReadOnly = errors.New("该位置在 WebDAV 上为只读")
 	// errDavCrossMount 跨挂载的移动或复制
 	errDavCrossMount = errors.New("不能跨挂载移动或复制")
+	// errDavIsDir 把已存在的目录当文件写（PUT/COPY 到目录）
+	errDavIsDir = errors.New("目标是一个目录，不能当文件写入")
 )
 
 // DavMount 一台可经 WebDAV 访问的挂载，以及它在统一根下的路径段
@@ -211,6 +213,50 @@ func (r *davDirFile) Write([]byte) (int, error)      { return 0, errors.New("是
 func (r *davDirFile) Seek(int64, int) (int64, error) { return 0, errors.New("是一个目录") }
 func (r *davDirFile) Close() error                   { return nil }
 
+// ---- 读取文件：挂载根要对外用挂载名 ----
+//
+// 为什么不改 DavFS.Stat 就够了：webdav 的 PROPFIND 取 displayname 走的是
+// **OpenFile(...).Stat()**（prop.go 的 props()：先 OpenFile 再 f.Stat()），
+// 不是 FileSystem.Stat。所以只在 Stat 里改名，手机上看到的仍然是本机物理目录名。
+
+type davReadFile struct {
+	*os.File
+	alias string // 非空时用它顶替 os.FileInfo 的名字（挂载根用挂载名）
+}
+
+func (f *davReadFile) Stat() (os.FileInfo, error) {
+	fi, err := f.File.Stat()
+	if err != nil || f.alias == "" {
+		return fi, err
+	}
+	return davAliasInfo{FileInfo: fi, name: f.alias}, nil
+}
+
+// davAliasInfo 只替换 Name()，其余（IsDir/Size/ModTime/Mode）沿用真实文件信息
+type davAliasInfo struct {
+	os.FileInfo
+	name string
+}
+
+func (a davAliasInfo) Name() string { return a.name }
+
+// ---- 拒写文件：目标是已存在的目录 ----
+//
+// 不能只靠 LocalDriver.CreateFile 自己报错：它内部是 os.Remove(phys) 再 Rename，
+// 若 phys 指向一个**空目录**，os.Remove 会把该目录删掉，然后把临时文件改名成它 ——
+// 结果"挂载文件夹"被整个替换成一个文件。所以必须在写入之前就拦住。
+
+type davRejectWriteFile struct {
+	info os.FileInfo
+}
+
+func (f *davRejectWriteFile) Write([]byte) (int, error)          { return 0, errDavIsDir }
+func (f *davRejectWriteFile) Close() error                       { return errDavIsDir }
+func (f *davRejectWriteFile) Read([]byte) (int, error)           { return 0, errDavIsDir }
+func (f *davRejectWriteFile) Seek(int64, int) (int64, error)     { return 0, errDavIsDir }
+func (f *davRejectWriteFile) Readdir(int) ([]os.FileInfo, error) { return nil, errDavIsDir }
+func (f *davRejectWriteFile) Stat() (os.FileInfo, error)         { return f.info, nil }
+
 // ---- 写入缓冲：本机挂载的 PUT/COPY 目标 ----
 //
 // 与 LocalDriver.CreateFile 同一策略：先写同目录临时文件，Close 时原子替换正式文件。
@@ -284,7 +330,8 @@ func (d *DavFS) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 		return nil, os.ErrNotExist
 	}
 	if t.Path == "/" {
-		// 挂载点用挂载名对外，避免暴露本机物理目录名
+		// 挂载点用挂载名对外。注意：PROPFIND 的 displayname 不走这里（走 OpenFile().Stat()，
+		// 见 davReadFile），这里是给 walkFS/递归判断等其它调用方用的，两处都要改才不漏。
 		return &davFileInfo{name: t.Mount.Seg, dir: true, mtime: st.ModTime()}, nil
 	}
 	return st, nil
@@ -321,6 +368,11 @@ func (d *DavFS) OpenFile(ctx context.Context, name string, flag int, perm os.Fil
 		return nil, os.ErrNotExist
 	}
 	if write {
+		// 目标已存在且是目录：绝不能当文件写。
+		// 放行的后果见 davRejectWriteFile 的注释——空目录会被整个替换成文件。
+		if st, serr := os.Stat(phys); serr == nil && st.IsDir() {
+			return &davRejectWriteFile{info: st}, nil
+		}
 		// 只在真正要写时补父目录：读请求（PROPFIND/GET）绝不能凭一个不存在的路径建出目录
 		_ = os.MkdirAll(filepath.Dir(phys), 0o755)
 		tmp := fmt.Sprintf("%s.cp-put-%d", phys, time.Now().UnixNano())
@@ -330,7 +382,15 @@ func (d *DavFS) OpenFile(ctx context.Context, name string, flag int, perm os.Fil
 		}
 		return &davWriteFile{File: f, ld: ld, vp: t.Path}, nil
 	}
-	return os.OpenFile(phys, flag, perm)
+	f, err := os.OpenFile(phys, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	if t.Path == "/" {
+		// 挂载点对外用挂载名，不暴露本机物理目录名（PROPFIND 的 displayname 从这里取）
+		return &davReadFile{File: f, alias: t.Mount.Seg}, nil
+	}
+	return f, nil
 }
 
 func (d *DavFS) Mkdir(ctx context.Context, name string, perm os.FileMode) error {

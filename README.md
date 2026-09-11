@@ -42,6 +42,8 @@ Built-in apps (11): File Explorer, This PC, Recycle Bin, Notepad, Image Viewer, 
 
 The drive core matches mainstream cloud drives: chunked upload with resume + SHA-256 instant upload, downloads (single file / multi-select / streamed folder zip), public share links (access code / expiry / download count / end-to-end encryption), recycle bin, zip compress & extract, offline download (HTTP + BT with a 3-layer SSRF guard), WebDAV, version history, thumbnails, global search, audit log. The storage layer uses a **driver registry architecture** (inspired by Cloudreve): local directories plus 123Pan / Aliyun Drive / Baidu Wangpan / Tianyi Cloud (experimental) plug in and out.
 
+**Phone / WebDAV setup**: WebDAV uses a **separate password**, not your login password. Set it first under *Settings → WebDAV password* (until you do, every account is rejected with "set it in Settings first"). Then in any WebDAV client use server `http://<LAN-IP>:18322/dav/`, username `admin`, password = that WebDAV password. `/dav/` is a **read-only index** listing every mount — it is the single address that covers all of them; to transfer files go into `/dav/<mount name>/` (or point the client straight at that single mount).
+
 ---
 
 ## 截图 Screenshots
@@ -89,6 +91,9 @@ The drive core matches mainstream cloud drives: chunked upload with resume + SHA
 - 压缩解压：右键压缩为 zip / 解压到当前目录（含子目录安全校验）
 - 离线下载：HTTP(S) 直链与 BT 磁力，服务器代下载入网盘，DB 任务队列重启自动恢复，**SSRF 三层防护**
 - WebDAV：**一个统一入口 `/dav/` 就是全部挂载**（不用一个个加）；单个挂载也能单独挂 `/dav/<挂载名>/`；独立应用密码，可挂载进 Windows 资源管理器 / 手机（内网手机访问走这条）
+  - **手机上怎么填**：先在「设置 → WebDAV 独立密码」里设一个密码（**与登录密码是两回事**，没设之前任何账号都连不上，服务端会明确回「请在设置中先行设置」），然后在手机端 WebDAV 客户端里填：地址 `http://<本机内网IP>:18322/dav/`、账号 `admin`、密码＝刚设的独立密码。填单个挂载就把地址改成 `…/dav/<挂载名>/`
+  - 统一根 `/dav/` 是**只读的索引层**（只列出挂载点，不能往里写）；要传文件请进到 `/dav/<挂载名>/` 里面
+  - 手机端常见客户端：ES 文件浏览器 / Solid Explorer / nPlayer / Documents（选「WebDAV」，协议 `http`，勾选「允许明文/不安全连接」）
 - 版本管理：覆盖时自动归档旧版本，恢复走硬链接零拷贝
 - 缩略图：服务端生成 480px JPEG 并磁盘缓存
 - 全局搜索、站内通知、审计日志
@@ -356,6 +361,10 @@ QR binding relies on the vendor redirecting the phone's browser back to `<public
 - **WebDAV 改为「一个统一入口」**：`/dav/` 变成**全部挂载的虚拟根** ——资源管理器 / 手机只要挂这一个地址就能看到所有已挂载文件夹，不用一台台加；单个挂载仍可单独挂 `/dav/<挂载名>/`。路径段用**挂载名**（非法字符替换为 `_`，重名自动加 `-盘符` 后缀），旧的盘符写法（`/dav/M/…`）保留为兼容别名；顺带修掉遗留的 `/dav/<用户名>/…` 前缀校验（它让按文档写的地址一律 403）。本机挂载可读写（PUT/COPY 走同目录临时文件 + 原子替换，`MKCOL`/`MOVE`/`DELETE` 均可），跨挂载移动被拒；统一根是虚拟目录、不可写。浏览器直接打开 `/dav/` 会看到一份索引页（列出各挂载 + 说明「挂这一个地址就是全部」）。
 - **删除系统自更新**：管理台「系统更新」页签与后端 `/api/admin/update/check|start|status|history` 全部移除（连同 `UpdateLog` 表模型、自重启监听器交接、`syscall.Exec` 重启路径）。二进制改为由部署者自行替换，少一条能从外网拉二进制并原地替换的高权限路径。
 - **修复构建脚本早期报错**：`build.bat` 头部的中文 `rem` 注释被 cmd 按 GBK 解析，会吞掉后一行（`setlocal`）并打印「文件名、目录名或卷标语法不正确」；改为纯 ASCII 注释，并在文件里写明「本文件注释必须保持 ASCII」。
+- **修复 WebDAV 两个真缺陷**（手机端接入实测暴露，均带反向验证）：
+  - ① **PUT 到"目录"会把目录删掉换成文件**：`PUT /dav/<挂载名>/`（或任一子目录）原先返回 `201 Created`，而底层 `LocalDriver.CreateFile` 是 `os.Remove(phys)` → `Rename`，当 `phys` 恰好是**空目录**时 `os.Remove` 把它整个删掉、临时文件顶上——挂载的文件夹就此变成一个文件。现在在 `OpenFile` 写入分支先判目录并返回**拒写对象**，webdav 以 `405 Method Not Allowed` 拒绝（RFC 4918 对"向集合 PUT"的规定），**一个字节都不落盘**，目录与内容完好。
+  - ② **统一根里显示的是本机物理文件夹名而不是挂载名**：`FindDisplayName` 取的是 `OpenFile(...).Stat()`（`prop.go` 的 `props()`），不是 `FileSystem.Stat`，所以只改 `Stat` 是死代码——手机上会看到 `D:\media\movies` 之类的目录名。现在读路径返回包了一层 `davReadFile`，挂载根的 `Stat().Name()` 用挂载名，物理路径不外泄。
+  - **验证**：WebDAV 手机接入专项 40/40（含上述两条的回归断言：PUT 目录 → 405 且目录仍是目录、displayname = 挂载名）；批次 9 的 `probe-webdav.mjs` **44/44**、`smoke.mjs` **60/60**、`ui.mjs` **35/35** 全部复跑无回归；`build.bat` exit 0。
 - **定位收敛为「单用户内网私有网盘」**：删除多用户体系（注册 / 用户管理 / 用户组 / 权限分级 / 配额分级）、游客登录与 24 小时游客工作区、站内共享（含「共享盘」与「来自他人的共享」应用）、macOS 与 Deepin 主题（只留 Windows 12 概念风格）；权限解析改为写死的 `model.AdminPerms()`，`UserGroup` 表整体移除（改为纯值对象 `Perms`，不入库）。
 - **新增「挂载文件夹」**：文件管理器根视图改为「已挂载的文件夹」网格（**不显示盘符**），新增管理员可见的挂载入口与内嵌本机目录浏览器（面包屑 / 上一级 / 进入子目录 / **无白名单**），挂载点右键可卸载；后端新增 `GET /api/admin/fs/dirs`（管理员专属，拒绝相对路径与不存在的目录）。盘符字段保留但由后端自动生成，界面永不暴露；WebDAV 路径段以挂载名为准（见上），盘符只在兼容旧写法时用。
 - **登录页改「仅密码」**：账号固定 `admin`，移除用户名框、注册链接与游客入口。

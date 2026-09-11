@@ -12,6 +12,8 @@ cd ..
 echo [2/3] embedding dist...
 if exist server\internal\web\dist rmdir /s /q server\internal\web\dist
 xcopy /e /i /q web\dist server\internal\web\dist >nul || goto :err
+rem placeholder: .gitignore keeps this file so a fresh clone can still run go build
+type nul > server\internal\web\dist\.keep
 
 echo [3/3] building cloudpan.exe...
 cd server

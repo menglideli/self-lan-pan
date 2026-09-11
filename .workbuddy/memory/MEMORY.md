@@ -25,6 +25,7 @@
 - **离线下载有三条链路（批次 10）**：`offline`（HTTP 直链）/ `bt`（`.torrent` + `magnet:`）/ `m3u8`（HLS）。类型判定在 `handler/bt.go` 的 `sniffOfflineKind()`（**m3u8 分支必须在 http 之前**，否则带 `.m3u8` 后缀的地址会落成普通直链）+ `OfflineHandler.Create` 的 `taskType` switch；任务分发在 `tasks.go` 的 `run()` switch。**无后缀的清单地址靠运行时嗅探**：`runOffline` 里 `bufio.Peek(1024)` + `looksLikeM3U8Body()` 命中后 `UpdateColumn("type","m3u8")` 并就地转 `runM3U8Task()`。
 - **m3u8 下载器**：`server/internal/handler/m3u8.go`（纯 Go，零第三方依赖，不需要 ffmpeg）。协议面：master 按 `BANDWIDTH` 选最高码率、`#EXT-X-BYTERANGE`（省略 offset 紧接上一段）、`#EXT-X-MAP`（合并时先写）、`AES-128`（**未给 IV 时按媒体序号推导 16 字节大端 IV**，`ivFromSeq()`）。所有取数走 `ssrfHTTP`，保住 SSRF 三层防护。默认 8 并发（上限 32）/ 20000 分片 / 20GB。
 - **多网卡地址枚举**：`server/internal/handler/netaddr.go` 的 `LocalAddresses(port)` → `GET /api/system/addresses`（在 `router.go` 的 `ug` 组）。每条带网卡名 + `kind`（`lan`/`virtual`，`classifyIface()` 按网卡名识别 VMware/Hyper-V/WSL/Docker/ZeroTier/Tailscale/WireGuard 等）。前端 `web/src/utils/lanaddr.ts`（模块级缓存 + single-flight）+ `web/src/components/AddressPicker.vue`。**`AddressPicker` 用的是自绘 `position:fixed` 遮罩** —— 复用的 `.dialog-mask` 是 `position:absolute`，在这里会漂。
+- **「复制链接类」入口必须一律走 AddressPicker，别再写 `location.origin`**（批次 10 收口）：多网卡机器上 `location.origin` 未必是对方能访问到的那个（用 localhost 打开就会生成 localhost 链接）。统一约定：**把「地址」与「路径」拆开存**（如 `dlPath = /api/dl?token=…`、`sharePath = pathname + '#/s/' + token`），显示用 `preferred()` 拼建议地址，复制时弹选择器。已接入 5 处：设置页 WebDAV、设置页分享列表、管理台挂载路径、资源管理器（提取直链 / 分享对话框）、记事本分享对话框。**新增任何"复制链接"入口时照这个来，不要退回 `location.origin`。**
 - **内网地址放行开关**：`SiteSetting.offline_allow_private`（默认关）→ `ssrf.go` 的 `ssrfAllowPrivate atomic.Bool`（`SetSSRFAllowPrivate()` 用 **`.Store()`**，`atomic.Bool` 没有 `.Set`）。保存后由 `AdminHandler.SettingsSet` 与 `main.go` 启动时各调一次 `ApplySSRFSetting()`。**加了新站点开关要记得同时接上"启动时应用"那条路径。**
 
 ## 构建与验证环境（踩过坑）
@@ -50,6 +51,7 @@
 - **PowerShell `Tee-Object` 回显中文乱码 ≠ 文件内容损坏**（控制台按 ANSI 解码所致）。判断探针结果以写入的结果文件为准。
 - **ESM 恒为严格模式**（批次 10 探针直接崩）：`chrome = spawn(...)` 这种未声明赋值会 `ReferenceError`，而 `cleanup()` 里引用它 → 必须在顶部先 `let chrome = null;`。
 - **`navigator.clipboard.writeText` 需要「用户激活」**：headless 下程序化 `element.click()` 不产生 user activation，**复制断言必然失败**。断言"复制按钮真能复制"必须走 CDP `Input.dispatchMouseEvent` 真实鼠标事件。
+- **右键菜单与 toast 只在桌面外壳里存在**（批次 10 追加）：`ContextMenu` 与 `DialogHost`（toast）只挂在 `WinDesktop.vue` 上 → `#/app/<id>` 独立单应用模式下**两者都不存在**。要测右键菜单或 toast 回执，必须走「`#/desktop` → 双击 `.desk-icon` 开窗」这条路径，否则是"菜单不出来、toast 也没有"的**假失败**（测试路径错，不是产品错）。
 
 ## 已知高危耦合（改动前必读）
 1. ~~本地盘按用户子目录隔离~~ —— **已于批次 1 关闭**（`main.go`、`handler/webdav.go` 的 join 与 `fscore.UserDirOf` 均已删除）。
@@ -93,5 +95,6 @@ README 已于批次 7 按当前功能面重写（双语）：删掉整章《在�
 - 批次 9 ✅：① 删掉系统自更新（`handler/update.go` 整文件 536 行 + 4 条路由 + `UpdateLog` + `main.go` 自重启）；② WebDAV 改为**统一入口 `/dav/`**（列全部本机挂载）+ 单挂载 `/dav/<挂载名>/` + 兼容别名 `/dav/<盘符>/`；顺手修掉 `DavAuth()` 里令 README 写的地址一律 403 的遗留前缀校验。
 - 批次 9 验证：`probe-webdav.mjs` **44/44**（新，含统一根只读/跨挂载拒绝/同名去重/401/编码）、`smoke.mjs` **60/60**、`ui.mjs` **35/35**、`build.bat` 真跑 exit 0 / 23.6 s / exe 64,166,400 B / 嵌入 119；**3 处反向变异全部命中**，其中 1 处（`davWriteFile.Close()` 临时文件残留）是首轮实测真实抓到的缺陷。
 - 批次 9 追加 ✅：修掉手机端接入实测暴露的两个**真缺陷** —— ①`PUT /dav/<挂载名>/` 会把**空目录整个删掉换成文件**（`LocalDriver.CreateFile` 的 `os.Remove(phys)` 所致；现返回 405 且零字节落盘）；②统一根的 `displayname` 是物理目录名而非挂载名（webdav 走 `OpenFile().Stat()`，只改 `FileSystem.Stat` 是死代码）。新增 `probe-phone.mjs` **40/40**、`probe-dav-root.mjs`；批次 9 的 44/44、60/60、35/35 全部复跑无回归。
-- 批次 10 ✅：用户真机反馈 4 件事 —— ①列表内容多时无法滚动（`flex:1` 只在 flex 父容器生效 + 子项缺 `min-height:0`）；②离线下载"不支持"= 后端实测都通、缺的是可诊断性（补 tracker/节点数回写/超时原因/Referer/内网开关/前端显示原因）；③新增 m3u8（HLS）下载；④多网卡地址全列出由用户挑。验证：`probe-m3u8` **28/28**、`probe-offline` **11/11**、`probe-addr` **16/16**、`probe-scroll` **13/13**，回归 `smoke` 60/60 / `probe-webdav` 44/44 / `probe-phone` 40/40 / `ui` 35/35，`go build`/`go vet`/`build.bat` exit 0，2 处反向变异精确命中。详见当日日志 §批次 10。
+- 批次 10 ✅：用户真机反馈 4 件事 —— ①列表内容多时无法滚动（`flex:1` 只在 flex 父容器生效 + 子项缺 `min-height:0`）；②离线下载"不支持"= 后端实测都通、缺的是可诊断性（补 tracker/节点数回写/超时原因/Referer/内网开关/前端显示原因）；③新增 m3u8（HLS）下载；④多网卡地址全列出由用户挑。验证：`probe-m3u8` **28/28**、`probe-offline` **11/11**、`probe-addr` **27/27**、`probe-scroll` **13/13**，回归 `smoke` 60/60 / `probe-webdav` 44/44 / `probe-phone` 40/40 / `ui` 35/35，`go build`/`go vet`/`build.bat` exit 0，**3 处反向变异**精确命中。详见当日日志 §批次 10。
+- 批次 10 追加 ✅：把"复制链接"入口全部接上 `AddressPicker`（资源管理器提取直链 / 资源管理器分享 / 记事本分享；设置页与管理台先前已接）。教训：**"我以为覆盖了"≠"用户说的那个地方覆盖了"** —— 收尾时要拿用户原话逐字过一遍入口清单。
 - 待用户拍板（均不阻塞）：① `docs/test-evidence/` 上游测试证据存档（含 guest / 终端旧截图，README 已不引用）是否清理；② 媒体中心当前是 `installable`（需去应用中心装），是否改为开机即在桌面；③ 手机端前端（暂缓，先走 WebDAV）。

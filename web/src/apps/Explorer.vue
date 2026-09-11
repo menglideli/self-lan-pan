@@ -295,7 +295,7 @@
         <div class="actions">
           <button class="btn" :disabled="encBusy" @click="shareShow = false">关闭</button>
           <button v-if="!shareLink" class="btn primary" :disabled="encBusy" @click="doShare">{{ encBusy ? '加密上传中…' : '创建链接' }}</button>
-          <button v-else class="btn primary" @click="copyLink">复制链接</button>
+          <button v-else class="btn primary" @click="copyLink">复制链接（选择地址）</button>
         </div>
       </div>
     </div>
@@ -479,6 +479,13 @@
         </div>
       </div>
     </div>
+
+    <!-- 复制直链 / 分享链接时的地址选择器：本机可能有多张网卡（VMware / Hyper-V /
+         ZeroTier / Tailscale …），以前一律用 location.origin 拼地址，等于假设
+         「我能访问的地址别人也能访问」——多网卡机器上这是错的（用 localhost 打开
+         就会生成 localhost 直链，手机和别的机器都打不开）。改为让用户自己挑。 -->
+    <AddressPicker v-model:show="dlPickerShow" title="复制直链 - 选择地址" :path="dlPath" @picked="onDlPicked" />
+    <AddressPicker v-model:show="sharePickerShow" title="复制分享链接 - 选择地址" :path="sharePath" @picked="onSharePicked" />
   </div>
 </template>
 
@@ -498,7 +505,9 @@ import { useUiDialog, useToast } from '../stores/dialog'
 import { collectDropFiles } from '../utils/drop'
 import { createEncryptedShare } from '../utils/shareEncrypt'
 import { copyText } from '../utils/clipboard'
+import { loadAddresses, preferred } from '../utils/lanaddr'
 import AppIcon from '../components/AppIcon.vue'
+import AddressPicker from '../components/AddressPicker.vue'
 
 const props = defineProps<{ winId: number; props: any }>()
 const store = useWindows()
@@ -1472,13 +1481,24 @@ const shareMaxDl = ref<number>(0)
 const shareAllowDl = ref(true)
 const sharePreview = ref(true)
 const shareLink = ref('')
+// 分享链接 = 地址 + 路径。地址部分现在由用户在 AddressPicker 里挑（多网卡机器上
+// location.origin 未必是对方能访问到的那一个），所以路径单独存。
+const sharePath = ref('')
+const sharePickerShow = ref(false)
 const shareEnc = ref(false)
 const encBusy = ref(false)
 const encProgress = ref('')
+// 地址枚举是异步的，这里用同步可读的兜底：先给出建议地址，用户点「复制链接」时
+// 会走选择器，选哪条由他决定。
+async function shareUrlOf(path: string) {
+  const list = await loadAddresses()
+  return (preferred(list)?.url || location.origin) + path
+}
 function shareSel() {
   if (selPaths.value.length !== 1) return
   shareTarget.value = items.value.find(i => i.path === selPaths.value[0]) || null
   sharePwd.value = ''; shareExpire.value = 0; shareMaxDl.value = 0; shareLink.value = ''
+  sharePath.value = ''
   shareEnc.value = false; encBusy.value = false; encProgress.value = ''
   shareShow.value = true
 }
@@ -1496,7 +1516,8 @@ async function doShare() {
           { expireDays: shareExpire.value, allowDownload: shareAllowDl.value, previewEnabled: sharePreview.value },
           p => { encProgress.value = p.done >= p.total ? '加密完成，正在收尾…' : `正在加密 ${p.done + 1}/${p.total}：${p.name}` }
         )
-        shareLink.value = location.origin + location.pathname + '#/s/' + r.token
+        sharePath.value = location.pathname + '#/s/' + r.token
+        shareLink.value = await shareUrlOf(sharePath.value)
         toast.success(`加密分享已创建（${r.count} 个文件已加密上传）`)
       } finally {
         encBusy.value = false
@@ -1510,22 +1531,22 @@ async function doShare() {
       remainDownloads: (Number.isFinite(shareMaxDl.value) && shareMaxDl.value > 0) ? Math.floor(shareMaxDl.value) : 0,
       allowDownload: shareAllowDl.value, previewEnabled: sharePreview.value
     })
-    shareLink.value = location.origin + location.pathname + '#/s/' + s.token
+    sharePath.value = location.pathname + '#/s/' + s.token
+    shareLink.value = await shareUrlOf(sharePath.value)
   } catch (e: any) {
     toast.error(e.message)
     encBusy.value = false
     encProgress.value = ''
   }
 }
-async function copyLink() {
-  const ok = await copyText(shareLink.value)
-  if (ok) {
-    toast.success('链接已复制')
-    shareShow.value = false
-  } else {
-    // 失败时不关对话框，提示手动选择链接复制
-    toast.error('复制失败，请选中下方链接后按 Ctrl+C 复制')
-  }
+// 复制分享链接：改成弹地址选择器，点哪条复制哪条（地址由用户决定）
+function copyLink() {
+  if (!sharePath.value) return
+  sharePickerShow.value = true
+}
+function onSharePicked(full: string) {
+  shareLink.value = full
+  shareShow.value = false
 }
 
 // ---- 属性 ----
@@ -1579,12 +1600,17 @@ const dlTarget = ref('')
 const dlHours = ref(24)
 const dlUrl = ref('')
 const dlData = ref<any>(null)
+// 直链 = 地址 + 路径（后端返回的 d.url 是 '/api/dl?token=…'）。地址部分由用户在
+// AddressPicker 里挑，不再写死 location.origin。
+const dlPath = ref('')
+const dlPickerShow = ref(false)
 function dlinkSel() {
   if (selPaths.value.length !== 1) return
   const f = items.value.find(i => i.path === selPaths.value[0])
   if (!f || f.isDir) { toast.error('文件夹不支持直链，请使用分享'); return }
   dlTarget.value = f.path
   dlUrl.value = ''
+  dlPath.value = ''
   dlData.value = f
   dlShow.value = true
 }
@@ -1592,17 +1618,18 @@ async function genDl() {
   if (!currentPolicy.value) return
   try {
     const d = await fsApi.dlink(currentPolicy.value.id, dlTarget.value, dlHours.value)
-    dlUrl.value = location.origin + d.url
+    dlPath.value = d.url
+    const list = await loadAddresses()
+    dlUrl.value = (preferred(list)?.url || location.origin) + dlPath.value
   } catch (e: any) { toast.error(e.message) }
 }
-async function copyDl() {
-  const ok = await copyText(dlUrl.value)
-  if (ok) {
-    toast.success('直链已复制')
-    dlShow.value = false
-  } else {
-    toast.error('复制失败，请选中上方直链后按 Ctrl+C 复制')
-  }
+function copyDl() {
+  if (!dlPath.value) return
+  dlPickerShow.value = true
+}
+function onDlPicked(full: string) {
+  dlUrl.value = full
+  dlShow.value = false
 }
 function testDl() { window.open(dlUrl.value) }
 

@@ -55,11 +55,14 @@
           <div v-if="shareMsg" style="font-size: 12.5px; color: #ff8a80; margin-bottom: 8px">{{ shareMsg }}</div>
           <div class="actions">
             <button class="btn" @click="shareShow = false">关闭</button>
-            <button class="btn primary" @click="copyShare">复制链接</button>
+            <button class="btn primary" @click="copyShare">复制链接（选择地址）</button>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- 复制分享链接时的地址选择器：多网卡机器上 location.origin 未必是对方能访问到的那个 -->
+    <AddressPicker v-model:show="sharePickerShow" title="复制分享链接 - 选择地址" :path="sharePath" @picked="onSharePicked" />
   </div>
 </template>
 
@@ -68,8 +71,9 @@ import { ref, computed, onMounted } from 'vue'
 import { fsApi, shareApi } from '../api/modules'
 import { useWindows } from '../stores/windows'
 import { useToast } from '../stores/dialog'
-import { copyText } from '../utils/clipboard'
+import { loadAddresses, preferred } from '../utils/lanaddr'
 import { createEncryptedShare } from '../utils/shareEncrypt'
+import AddressPicker from '../components/AddressPicker.vue'
 
 const props = defineProps<{ winId: number; props: any }>()
 const store = useWindows()
@@ -88,6 +92,9 @@ const shareShow = ref(false)
 const sharePwd = ref('')
 const shareExpire = ref(0)
 const shareLink = ref('')
+// 分享链接 = 地址 + 路径；地址由 AddressPicker 决定，所以路径单独存
+const sharePath = ref('')
+const sharePickerShow = ref(false)
 const shareBusy = ref(false)
 const shareMsg = ref('')
 const shareEnc = ref(false)
@@ -104,7 +111,8 @@ async function doShare() {
         { expireDays: shareExpire.value, allowDownload: true, previewEnabled: true },
         () => { shareMsg.value = '' }
       )
-      shareLink.value = location.origin + location.pathname + '#/s/' + r.token
+      sharePath.value = location.pathname + '#/s/' + r.token
+      shareLink.value = await shareUrlOf(sharePath.value)
       toast.success('加密分享已创建')
       return
     }
@@ -113,18 +121,26 @@ async function doShare() {
       password: sharePwd.value || undefined, expireDays: shareExpire.value,
       remainDownloads: 0, allowDownload: true, previewEnabled: true
     })
-    shareLink.value = location.origin + location.pathname + '#/s/' + s.token
+    sharePath.value = location.pathname + '#/s/' + s.token
+    shareLink.value = await shareUrlOf(sharePath.value)
   } catch (e: any) {
     shareMsg.value = e?.message || '创建失败'
   } finally {
     shareBusy.value = false
   }
 }
-// HTTP 非安全上下文下 navigator.clipboard 不可用，copyText 内部回退 execCommand
+// 分享链接的地址部分让用户自己挑（多网卡机器上 location.origin 未必是对方能访问到的那个）
+async function shareUrlOf(p: string) {
+  const list = await loadAddresses()
+  return (preferred(list)?.url || location.origin) + p
+}
 async function copyShare() {
-  const ok = await copyText(shareLink.value)
-  if (ok) toast.success('链接已复制')
-  else shareMsg.value = '复制失败，请选中上方链接后按 Ctrl+C 复制'
+  if (!sharePath.value) return
+  sharePickerShow.value = true
+}
+function onSharePicked(full: string) {
+  shareLink.value = full
+  shareShow.value = false
 }
 
 onMounted(async () => {

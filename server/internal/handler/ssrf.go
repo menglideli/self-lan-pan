@@ -7,8 +7,23 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// ssrfAllowPrivate 站点设置 offline_allow_private 的运行时开关（见 ssrfBlocked 注释）
+var ssrfAllowPrivate atomic.Bool
+
+// SetSSRFAllowPrivate 由站点设置驱动；true = 放行内网/保留地址
+func SetSSRFAllowPrivate(v bool) { ssrfAllowPrivate.Store(v) }
+
+// SSRFAllowPrivate 读取当前开关（供任务层给出准确的错误提示）
+func SSRFAllowPrivate() bool { return ssrfAllowPrivate.Load() }
+
+// ApplySSRFSetting 从站点设置 KV 同步开关（启动时与设置保存后各调一次）
+func ApplySSRFSetting(settings map[string]string) {
+	SetSSRFAllowPrivate(strings.EqualFold(strings.TrimSpace(settings["offline_allow_private"]), "true"))
+}
 
 // ---- 离线下载 SSRF 防护 ----
 // 代下载功能会按用户给的 URL 发起服务器端请求，必须阻止其被用来探测/访问
@@ -20,7 +35,15 @@ import (
 //     防 DNS rebinding（建任务时解析为公网、连接时解析为私网的域名）。
 
 // ssrfBlocked 判断地址是否属于必须拒绝的范围（私网/回环/链路本地/保留/组播等）
+//
+// 例外：站点设置 offline_allow_private=true 时整个判定直接放行。单用户私有部署下
+// 服务就跑在用户自己的机器上，"服务器"和"用户"是同一台机器，把 NAS / 内网媒体服务器
+// 当下载源是正当需求；这个开关把 SSRF 防护从"阻止访问内网"降级为"仅阻止误用"。
+// 默认关闭，必须在管理台显式打开。
 func ssrfBlocked(ip net.IP) bool {
+	if ssrfAllowPrivate.Load() {
+		return false
+	}
 	if ip == nil {
 		return true
 	}

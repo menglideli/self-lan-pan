@@ -118,8 +118,12 @@
         </div>
       </div>
 
-      <!-- 主区：文件列表视图 -->
-      <div v-else ref="fileArea" style="flex: 1; position: relative; overflow: hidden" @mousedown="onAreaMouseDown">
+      <!-- 主区：文件列表视图
+           注意：本容器必须是纵向 flex（.file-area）——.file-list/.file-grid 的 "flex:1" 只有在
+           flex 父容器里才生效。原先这里是普通 block + overflow:hidden，于是列表按内容撑到
+           3130px 高、被容器裁掉且 scrollHeight === clientHeight，滚动条永远不会出现
+           （即「文件多了无法上下滚动」的根因）。 -->
+      <div v-else ref="fileArea" class="file-area" @mousedown="onAreaMouseDown">
         <div v-if="viewMode === 'grid'" class="file-grid">
           <div v-for="f in sortedItems" :key="f.path" class="file-item" :class="{ selected: selSet.has(f.path) }" :data-path="f.path"
             @mousedown="onItemDown(f, $event)" @dblclick="openItem(f)" @contextmenu.stop.prevent="onItemCtx(f, $event)"
@@ -1852,6 +1856,17 @@ function fmtTime(ms: number) {
 </script>
 
 <style scoped>
+/* 文件区容器：纵向 flex，让 .file-list / .file-grid 的 flex:1 + overflow:auto 真正生效。
+   min-height:0 必需 —— flex 子项默认 min-height:auto 会被内容撑开，等于没约束。
+   position:relative 供 .empty-hint / .rubber-band 绝对定位。 */
+.file-area {
+  flex: 1; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  position: relative; overflow: hidden;
+}
+.file-area > .file-list,
+.file-area > .file-grid { min-height: 0; }
+
 /* 多标签 */
 .exp-tabs {
   display: flex; align-items: flex-end; gap: 4px; padding: 6px 10px 0;

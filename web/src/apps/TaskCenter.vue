@@ -52,24 +52,33 @@
           <button class="tool-btn" @click="offAddShow = !offAddShow">{{ offAddShow ? '收起' : '＋ 新建' }}</button>
         </div>
         <div v-if="offAddShow" class="tc-addform">
-          <input class="input" v-model="offUrl" placeholder="http(s) 直链 / .torrent / magnet: 磁力链接" style="flex: 1" @keyup.enter="addOffline" />
+          <input class="input" v-model="offUrl" placeholder="http(s) 直链 / m3u8 视频 / .torrent / magnet: 磁力链接" style="flex: 1" @keyup.enter="addOffline" />
           <select class="input" v-model.number="offPolicyId" style="width: 150px">
             <option v-for="p in offPolicies" :key="p.id" :value="p.id">{{ p.name }} ({{ p.letter }})</option>
           </select>
           <input class="input" v-model="offDest" placeholder="保存目录，如 /downloads" style="width: 160px" @keyup.enter="addOffline" />
           <button class="btn primary" :disabled="!offUrl.trim() || offBusy" @click="addOffline">{{ offBusy ? '添加中…' : '添加' }}</button>
+          <div class="tc-adv">
+            <input class="input" v-model="offReferer" placeholder="Referer（可选；防盗链站点才需要）" style="flex: 1" />
+          </div>
+          <div class="tc-kindhint">{{ kindHint }}</div>
           <div v-if="offMsg" class="tc-errmsg">{{ offMsg }}</div>
         </div>
         <div v-if="!offline.length && !offAddShow" class="tc-empty">暂无离线下载任务</div>
         <div v-for="t in offline" :key="t.id" class="tc-row">
-          <AppIcon :name="t.status === 'error' ? 'file' : (t.kind === 'bt' ? 'cloud' : 'download')" :size="20" />
+          <AppIcon :name="t.status === 'error' ? 'file' : (t.kind === 'bt' ? 'cloud' : (t.kind === 'm3u8' ? 'video' : 'download'))" :size="20" />
           <div class="tc-main">
             <div class="tc-name" :title="t.url">{{ t.name || t.url }}</div>
             <div class="tc-bar">
               <div class="tc-bar-fill" :class="{ err: t.status === 'error', ok: t.status === 'finished' }"
                 :style="{ width: (t.status === 'finished' ? 100 : t.progress) + '%' }"></div>
             </div>
+            <div class="tc-subline" v-if="t.kind === 'm3u8' && t.segTotal">
+              分片 {{ t.segDone || 0 }} / {{ t.segTotal }}<span v-if="t.variant"> · {{ t.variant }}</span>
+            </div>
             <div class="tc-subline" v-if="t.dest !== '/'">保存到 {{ t.dest }}</div>
+            <!-- 失败原因 / 阶段提示（后端把诊断写在这里，之前只在任务中心外露不出来） -->
+            <div v-if="t.error" class="tc-subline err" :title="t.error">{{ t.error }}</div>
           </div>
           <div class="tc-st" :class="tCls(t.status)">{{ offStatusText(t.status) }}</div>
           <div class="tc-ops">
@@ -139,17 +148,30 @@ function offStatusText(s: string) {
 interface OffTask {
   id: number; type: string; status: string; progress: number; error: string
   url: string; name?: string; dest: string; kind: string
+  segDone?: number; segTotal?: number; variant?: string
 }
 const offline = ref<OffTask[]>([])
 const offAddShow = ref(false)
 const offUrl = ref('')
 const offDest = ref('/downloads')
+const offReferer = ref('')
 const offPolicyId = ref(0)
 const offPolicies = ref<any[]>([])
 const offBusy = ref(false)
 const offMsg = ref('')
 const refreshing = ref(false)
 let timer: number | undefined
+
+// 按链接形状实时告诉用户会被当成哪种任务，省得"以为在下视频、实际存了个清单文本"
+const kindHint = computed(() => {
+  const u = offUrl.value.trim().toLowerCase()
+  if (!u) return '支持：当直链 / m3u8 视频 / .torrent 种子 / magnet: 磁力链接'
+  if (u.startsWith('magnet:')) return '将按「磁力链」下载（内置 BT 引擎，需要能访问 DHT/公共 tracker）'
+  if (u.includes('.m3u8') || u.includes('.m3u')) return '将按「m3u8 视频」下载：自动选最高码率 → 并发抓分片 → AES-128 自动解密 → 合并保存为 .ts'
+  if (u.endsWith('.torrent')) return '将按「种子文件」下载'
+  if (u.startsWith('http')) return '将按「HTTP 直链」代下载；若该地址实际返回 m3u8 清单，会自动转成 m3u8 下载'
+  return ''
+})
 
 async function loadOffline() {
   if (!offlineAllowed.value) return
@@ -160,7 +182,8 @@ async function loadOffline() {
       let p: any = {}
       try { p = JSON.parse(t.props || '{}') } catch { /* ignore */ }
       return { id: t.id, type: t.type, status: t.status, progress: t.progress ?? 0, error: t.error || '',
-        url: p.url || '', name: p.name || '', dest: p.dest || '/', kind: p.kind || 'http' }
+        url: p.url || '', name: p.name || p.rtName || '', dest: p.dest || '/', kind: p.kind || 'http',
+        segDone: p.segDone || 0, segTotal: p.segTotal || 0, variant: p.variant || '' }
     })
   } catch { /* 轮询失败静默，下轮重试 */ } finally {
     refreshing.value = false
@@ -182,7 +205,8 @@ async function addOffline() {
     await post('/offline', {
       policyId: offPolicyId.value,
       dest: offDest.value.trim() || '/',
-      url: offUrl.value.trim()
+      url: offUrl.value.trim(),
+      referer: offReferer.value.trim() || undefined
     })
     offUrl.value = ''
     offAddShow.value = false
@@ -256,4 +280,11 @@ onBeforeUnmount(() => {
   padding: 10px 4px; border-bottom: 1px solid var(--stroke);
 }
 .tc-errmsg { width: 100%; font-size: 12px; color: #e53935 }
+/* 高级参数行（Referer）与"这条链接会被当成什么任务"的即时提示 */
+.tc-adv { width: 100%; display: flex; gap: 8px; align-items: center; }
+.tc-kindhint { width: 100%; font-size: 11.5px; color: var(--text-3); line-height: 1.6 }
+/* 任务失败原因/阶段提示：只在有内容时出现，过长省略并可悬停看全文 */
+.tc-subline.err {
+  color: #e53935; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px;
+}
 </style>

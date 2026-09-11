@@ -22,6 +22,11 @@
 - **挂载列表变化走 `cp-policies-changed` 跨窗口广播**：管理台 `loadAll()` 对挂载列表算指纹（id/名称），变了才 `window.dispatchEvent`；`Explorer.vue` 监听后重拉 `fsApi.policies()`，当前挂载被卸载则退回根视图。**别复用 `cp-refresh-explorer`**——那个只刷"当前目录的文件列表"，不重拉挂载列表（挂载根视图不会更新）。
 - **Explorer 的导航历史是 `(policyId, path)` 二元组**（`policyId === null` = "此电脑"根视图，这是"后退能退回根视图"的唯一表达方式）。`pushHistory()` 压的是**来处**，因此必须在改 `tab.policyId` / `tab.path` **之前**调用；反过来写就会出现"后退按钮可点但点了没反应"。
 
+- **离线下载有三条链路（批次 10）**：`offline`（HTTP 直链）/ `bt`（`.torrent` + `magnet:`）/ `m3u8`（HLS）。类型判定在 `handler/bt.go` 的 `sniffOfflineKind()`（**m3u8 分支必须在 http 之前**，否则带 `.m3u8` 后缀的地址会落成普通直链）+ `OfflineHandler.Create` 的 `taskType` switch；任务分发在 `tasks.go` 的 `run()` switch。**无后缀的清单地址靠运行时嗅探**：`runOffline` 里 `bufio.Peek(1024)` + `looksLikeM3U8Body()` 命中后 `UpdateColumn("type","m3u8")` 并就地转 `runM3U8Task()`。
+- **m3u8 下载器**：`server/internal/handler/m3u8.go`（纯 Go，零第三方依赖，不需要 ffmpeg）。协议面：master 按 `BANDWIDTH` 选最高码率、`#EXT-X-BYTERANGE`（省略 offset 紧接上一段）、`#EXT-X-MAP`（合并时先写）、`AES-128`（**未给 IV 时按媒体序号推导 16 字节大端 IV**，`ivFromSeq()`）。所有取数走 `ssrfHTTP`，保住 SSRF 三层防护。默认 8 并发（上限 32）/ 20000 分片 / 20GB。
+- **多网卡地址枚举**：`server/internal/handler/netaddr.go` 的 `LocalAddresses(port)` → `GET /api/system/addresses`（在 `router.go` 的 `ug` 组）。每条带网卡名 + `kind`（`lan`/`virtual`，`classifyIface()` 按网卡名识别 VMware/Hyper-V/WSL/Docker/ZeroTier/Tailscale/WireGuard 等）。前端 `web/src/utils/lanaddr.ts`（模块级缓存 + single-flight）+ `web/src/components/AddressPicker.vue`。**`AddressPicker` 用的是自绘 `position:fixed` 遮罩** —— 复用的 `.dialog-mask` 是 `position:absolute`，在这里会漂。
+- **内网地址放行开关**：`SiteSetting.offline_allow_private`（默认关）→ `ssrf.go` 的 `ssrfAllowPrivate atomic.Bool`（`SetSSRFAllowPrivate()` 用 **`.Store()`**，`atomic.Bool` 没有 `.Set`）。保存后由 `AdminHandler.SettingsSet` 与 `main.go` 启动时各调一次 `ApplySSRFSetting()`。**加了新站点开关要记得同时接上"启动时应用"那条路径。**
+
 ## 构建与验证环境（踩过坑）
 - 本机 Go 1.26.3，`go.mod` 要 1.27.0：必须 `export GOPROXY=https://goproxy.cn,direct`（**勿设 `GOSUMDB=off`**，会导致工具链校验失败）。`proxy.golang.org` 不可达。
 - `server/internal/web/dist/.keep` 已就位，后端可单独 `go build ./...`（`go:embed all:dist` 需要该目录非空）。`build.bat` 会先 `rmdir` 整个 dist 再 xcopy，**所以它必须自己重建 `.keep`**（批次 7 补上；`build.sh` 本就有 `touch .keep`）。
@@ -40,6 +45,11 @@
 - **`.bat` 里不要出现中文，已有中文也要清掉**（批次 7 + 批次 9 两次实测炸过）：`build.bat`/`start.bat` 是 **UTF-8 无 BOM**，cmd 按系统 ANSI（GBK）代码页读取；中文字节被 GBK 解读后可能凑出 `&`/`|`/`>` 等元字符，直接把命令行打断。现象是构建 0.2 秒 `BUILD FAILED` + `'ist' 不是内部或外部命令`（`dist` 被截断）；批次 9 的表现是**中文 `rem` 吞掉后一行**（`setlocal` 消失）+ 早段报「文件名、目录名或卷标语法不正确」。脚本内容一律 ASCII 英文。
 - **PowerShell 工具禁止直接调 `cmd.exe`**（"cmd.exe cannot be used from the PowerShell tool"）。要跑 `.bat` 用 Node `spawn('cmd.exe', ['/c','build.bat'])`——`%TEMP%\cp-verify2\run-build.mjs`（跑 build.bat 并自检产物）与 `run-start.mjs`（跑 start.bat + taskkill）就是这么干的。
 - **跑 `start.bat` 会在仓库里建真实 `server/data`**（它 `cd /d "%~dp0server"` 且不设 `CP_DATA`），即建出一个真实 admin 账号；密码只在那一瞬的日志里，用户没看到，下次启动又不会重印 → 直接进不去。**验证完必须删掉整个 `server/data`**（先确认 `CreationTime` 就是验证时刻），或先重定向 `CP_DATA` 到临时目录。
+- **跑探针前先核对 `exe.LastWriteTime > 所有源文件`**（批次 10 踩到）：`m3u8.go` 比 `cloudpan.exe` 晚 2 分半，不重建就跑探针，验证的是**旧二进制的绿色**，等于白测。
+- **`build.bat` 在 PowerShell 里 `$LASTEXITCODE` 可能是 1 但实际成功**：脚本尾部 `goto :eof` 会带上最后一条命令的 errorlevel。**判成功看有没有打印 `BUILD OK`**，别只看退出码。
+- **PowerShell `Tee-Object` 回显中文乱码 ≠ 文件内容损坏**（控制台按 ANSI 解码所致）。判断探针结果以写入的结果文件为准。
+- **ESM 恒为严格模式**（批次 10 探针直接崩）：`chrome = spawn(...)` 这种未声明赋值会 `ReferenceError`，而 `cleanup()` 里引用它 → 必须在顶部先 `let chrome = null;`。
+- **`navigator.clipboard.writeText` 需要「用户激活」**：headless 下程序化 `element.click()` 不产生 user activation，**复制断言必然失败**。断言"复制按钮真能复制"必须走 CDP `Input.dispatchMouseEvent` 真实鼠标事件。
 
 ## 已知高危耦合（改动前必读）
 1. ~~本地盘按用户子目录隔离~~ —— **已于批次 1 关闭**（`main.go`、`handler/webdav.go` 的 join 与 `fscore.UserDirOf` 均已删除）。
@@ -57,6 +67,7 @@
 12. **`fscore.LocalDriver{Root}` 直接构造 vs `NewLocal()` 的区别在 webdav 里是安全边界**：`NewLocal` 内部 `os.MkdirAll` 会**静默建目录**。`webdav.go` 的 `davLocal()` 必须用直接构造（`&fscore.LocalDriver{Root: abs}`）。另外 `OpenFile` 的 `os.MkdirAll(dir)` 只能挂在 `write == true` 分支——读请求不能凭一个不存在的路径建目录。
 13. **`LocalDriver.CreateFile` 是 `os.Remove(phys)` + `Rename`，所以"写文件"的路径必须先挡住"目标是目录"**（批次 9 追加实测到的数据破坏）。当 `phys` 是**空目录**时 `os.Remove` 成功 → 目录被整个替换成文件；非空目录才失败。`DavFS.OpenFile` 的写入分支现在先 `os.Stat` 判目录并返回 `davRejectWriteFile`（→ 405，零字节落盘）。**任何新的"写"入口（新的 driver / 新的上传路径）都要过同一道坎。**
 14. **`x/net/webdav` 取 PROPFIND 的 displayname 走的是 `OpenFile(...).Stat()`，不是 `FileSystem.Stat`**（`prop.go` 的 `props()`）。所以想改对外显示的名字，只改 `FileSystem.Stat` 是**死代码**；要包一层 `webdav.File` 覆盖 `Stat()`（现由 `davReadFile` + `davAliasInfo` 实现，让挂载根显示挂载名而非物理目录名）。**两处都要改**，`Stat()` 里也留了分支给 walkFS 用。
+15. **前端滚动条消失的经典陷阱组合（批次 10）**：`flex:1` **只在 flex 父容器里生效**；且 flex 子项默认 `min-height:auto`，会被内容撑开、把滚动能力压掉。**两个条件都要满足**（父容器 column flex + 子项 `min-height:0`）才出滚动条。`Explorer.vue` 的 `.file-area` 就是为此而设；改这块布局时别把 `.file-area` 去掉或丢掉 `min-height:0`。判断方法：`scrollHeight === clientHeight` 就说明容器被内容撑开了。
 
 ## 已锁定的改造决策（2026-09-11 用户拍板）
 登录页只留密码框；文件管理器不要盘符、根视图直接列挂载点；挂载入口放文件管理器内（后端需新增目录浏览接口）；手机先走 WebDAV；公开分享暂留；**用户组 / 权限模型彻底删除、权限写死为管理员全开**（配额不限；`RecycleRetentionDays: 0` = 回收站永久保留，系统不再有任何"按时间自动物理删用户文件"的行为）。
@@ -77,9 +88,10 @@ README 已于批次 7 按当前功能面重写（双语）：删掉整章《在�
 - 批次 7 ✅：全链路 `build.bat` 通过（exit 0 / `BUILD OK` / 24.7s / exe 61 MB / 嵌入 **134** 个 dist 条目）；用**构建产物本身**跑 `smoke.mjs` **60/60**、`ui.mjs` **22/22**；`start.bat` 语法与首部署日志验证通过；README 按当前功能面重写完成（见上节）。
 - 批次 8 ✅ `3d8676a`：修复用户内网真机反馈的 5 个问题 —— ①空态「挂载文件夹」按钮点不动（根因：`base.css` 的 `.empty-hint` 带 `pointer-events:none`，空态里嵌的按钮被一起禁用）；②进入挂载文件夹后「后退」点了没反应（根因：`pushHistory` 压的是目标路径而非来处）；③管理台新增挂载后文件管理器不刷新（新增 `cp-policies-changed` 广播）；④删管理台「系统更新」页签及全部前端调用（**后端 `/api/admin/update/*` 路由保留**）；⑤离线下载"没下下来"（**后端本就正常**，实测 38MB / 3s 下完并落盘；真因是前端完成后不刷新目录 + 不显示失败原因）。
 - 验证：`smoke.mjs` **60/60**、`ui.mjs` **34/34**（批次 8 新增 12 项）、`probe-all.mjs`（离线下载专项，新）、**4 处反向变异全部命中**（含离线下载变异精确复现了用户现象）。
-- **全部 9 个批次已完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7，§7.4 = 批次 8，§7.5 = 批次 9 验证记录）。
+- **全部 10 个批次已完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7，§7.4 = 批次 8，§7.5 = 批次 9，§7.6 = 批次 9 追加，§7.7 = 批次 10）。
 - 批次 7 顺手修掉的真问题：① `build.bat` 不重建 `.keep`（先 `rmdir` 整个 dist）→ 空克隆后 `go:embed` 会失败，已补 `type nul > dist\.keep`；② README 的 Go 版本要求写着 `1.22+`（实际 `go.mod` 要 1.27.0）→ 更正为 `1.27+`；③ `start.bat` 注释还写着"默认账号 admin / admin123"（实际首部署是随机密码）→ 已改。
 - 批次 9 ✅：① 删掉系统自更新（`handler/update.go` 整文件 536 行 + 4 条路由 + `UpdateLog` + `main.go` 自重启）；② WebDAV 改为**统一入口 `/dav/`**（列全部本机挂载）+ 单挂载 `/dav/<挂载名>/` + 兼容别名 `/dav/<盘符>/`；顺手修掉 `DavAuth()` 里令 README 写的地址一律 403 的遗留前缀校验。
 - 批次 9 验证：`probe-webdav.mjs` **44/44**（新，含统一根只读/跨挂载拒绝/同名去重/401/编码）、`smoke.mjs` **60/60**、`ui.mjs` **35/35**、`build.bat` 真跑 exit 0 / 23.6 s / exe 64,166,400 B / 嵌入 119；**3 处反向变异全部命中**，其中 1 处（`davWriteFile.Close()` 临时文件残留）是首轮实测真实抓到的缺陷。
 - 批次 9 追加 ✅：修掉手机端接入实测暴露的两个**真缺陷** —— ①`PUT /dav/<挂载名>/` 会把**空目录整个删掉换成文件**（`LocalDriver.CreateFile` 的 `os.Remove(phys)` 所致；现返回 405 且零字节落盘）；②统一根的 `displayname` 是物理目录名而非挂载名（webdav 走 `OpenFile().Stat()`，只改 `FileSystem.Stat` 是死代码）。新增 `probe-phone.mjs` **40/40**、`probe-dav-root.mjs`；批次 9 的 44/44、60/60、35/35 全部复跑无回归。
+- 批次 10 ✅：用户真机反馈 4 件事 —— ①列表内容多时无法滚动（`flex:1` 只在 flex 父容器生效 + 子项缺 `min-height:0`）；②离线下载"不支持"= 后端实测都通、缺的是可诊断性（补 tracker/节点数回写/超时原因/Referer/内网开关/前端显示原因）；③新增 m3u8（HLS）下载；④多网卡地址全列出由用户挑。验证：`probe-m3u8` **28/28**、`probe-offline` **11/11**、`probe-addr` **16/16**、`probe-scroll` **13/13**，回归 `smoke` 60/60 / `probe-webdav` 44/44 / `probe-phone` 40/40 / `ui` 35/35，`go build`/`go vet`/`build.bat` exit 0，2 处反向变异精确命中。详见当日日志 §批次 10。
 - 待用户拍板（均不阻塞）：① `docs/test-evidence/` 上游测试证据存档（含 guest / 终端旧截图，README 已不引用）是否清理；② 媒体中心当前是 `installable`（需去应用中心装），是否改为开机即在桌面；③ 手机端前端（暂缓，先走 WebDAV）。

@@ -65,6 +65,8 @@ func main() {
 
 	site := &handler.SiteHandler{Cfg: cfg, Fs: fsService(cfg), ZipTmp: cfg.Sub("ziptmp")}
 	handler.InitTaskPool(site.Fs, cfg.Sub("bt_tmp"))
+	// 站点设置里的运行时开关同步一次（如"离线下载是否允许访问内网地址"）
+	handler.ApplySSRFSetting(handler.GetSiteSettings())
 	handler.Setup(r, cfg, site)
 	handler.RegisterDav(r, site.Fs)
 	web.Register(r)
@@ -75,6 +77,10 @@ func main() {
 		log.Fatalf("监听 :%s 失败: %v", cfg.Port, err)
 	}
 	log.Printf("CloudPan 启动: http://localhost:%s  数据目录: %s", cfg.Port, cfg.DataDir)
+	// 多网卡机器上把全部可用地址都打出来：手机/别的电脑该连哪个一眼可见，不用自己猜
+	for _, a := range handler.LocalAddresses(cfg.Port) {
+		log.Printf("  可访问地址: %-28s (%s)", a.URL, a.Iface)
+	}
 	if err := (&http.Server{Handler: r}).Serve(ln); err != nil {
 		log.Fatalf("启动失败: %v", err)
 	}

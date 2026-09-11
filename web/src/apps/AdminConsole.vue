@@ -131,7 +131,7 @@
                     <div style="font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis" :title="p.rootPath || ''">{{ p.rootPath || p.statusMsg || '-' }}</div>
                     <div class="ac-status" :class="p.status"><span class="ac-dot" :class="{ off: p.status !== 'active' }"></span>{{ p.status === 'active' ? '正常' : p.status === 'disabled' ? '已停用' : '异常' }}</div>
                     <div v-if="p.davPath" class="ac-status" style="color: var(--text-3); cursor: pointer"
-                         :title="'点击复制：' + davRoot + p.davPath"
+                         :title="'点击选择本机地址并复制：' + p.davPath"
                          @click="copyDav(p.davPath)">WebDAV {{ p.davPath }}</div>
                     <div v-else class="ac-status" style="color: var(--text-3)">云盘不经 WebDAV</div>
                   </td>
@@ -226,6 +226,12 @@
             <div class="ac-set-row">
               <div class="ac-set-lbl"><b>启用 WebDAV</b><span>允许用户把网盘挂载进 Windows 资源管理器</span></div>
               <label class="ac-switch"><input type="checkbox" :checked="settings.webdav_enabled === 'true'" @change="settings.webdav_enabled = ($event.target as HTMLInputElement).checked ? 'true' : 'false'" /><span class="ac-slider"></span></label>
+            </div>
+            <div class="ac-set-sep"></div>
+            <div class="ac-set-title">离线下载</div>
+            <div class="ac-set-row">
+              <div class="ac-set-lbl"><b>允许访问内网地址</b><span>关闭时（默认）服务器代下载会拒绝内网 / 保留网段（SSRF 防护）。单机私有部署下，若想把 NAS、内网媒体服务器、本机其它服务上的文件或 m3u8 拉进网盘，需要打开它。</span></div>
+              <label class="ac-switch"><input type="checkbox" :checked="settings.offline_allow_private === 'true'" @change="settings.offline_allow_private = ($event.target as HTMLInputElement).checked ? 'true' : 'false'" /><span class="ac-slider"></span></label>
             </div>
             <div class="ac-set-sep"></div>
             <div class="ac-set-title">通知外发</div>
@@ -420,6 +426,9 @@
         </div>
       </div>
     </div>
+
+    <!-- 点击某台挂载的 WebDAV 路径时弹出：多网卡机器上让用户挑一个对方能访问的地址 -->
+    <AddressPicker v-model:show="davPickerShow" title="复制 WebDAV 地址" :path="davPickerPath" />
   </div>
 </template>
 
@@ -429,18 +438,21 @@ import { useSession } from '../stores/session'
 import { useAppState } from '../stores/appstate'
 import { useUiDialog, useToast } from '../stores/dialog'
 import { adminApi } from '../api/modules'
-import { copyText } from '../utils/clipboard'
 import AppIcon from '../components/AppIcon.vue'
+import AddressPicker from '../components/AddressPicker.vue'
 import QRCode from 'qrcode'
 
 const session = useSession()
 const uiDlg = useUiDialog()
 const toast = useToast()
 const tab = ref('dash')
-// WebDAV 统一入口：按当前访问地址推算（挂载路径由后端下发，前端不重复实现命名规则）
-const davRoot = computed(() => location.origin)
+// WebDAV 统一入口：挂载路径段由后端下发（前端不重复实现命名规则），
+// 主机部分则交给地址选择器 —— 多网卡机器上不能拿 location.origin 猜。
+const davPickerShow = ref(false)
+const davPickerPath = ref('')
 function copyDav(path: string) {
-  copyText(location.origin + path).then(ok => ok ? toast.success('WebDAV 地址已复制：' + path) : toast.error('复制失败，请手动选择复制'))
+  davPickerPath.value = path
+  davPickerShow.value = true
 }
 const tabs = computed(() => [
   { id: 'dash', name: '仪表盘', icon: 'info' },

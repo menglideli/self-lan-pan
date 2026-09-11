@@ -86,13 +86,33 @@ func (p *TaskPool) runBT(t *model.Task) error {
 	if err != nil {
 		return fmt.Errorf("添加任务失败: %w", err)
 	}
+	// 补一批公共 tracker。磁力链里自带的 tr= 往往早已失效，只靠 DHT 时内网环境
+	// 极容易一直连不上节点；补上公共 tracker 是提高"能拿到种子信息"概率最直接的手段。
+	// 每个元素是一个 tracker tier（这里是单元素 tier），失败的 tracker 会被库自行忽略。
+	if tiers := publicTrackerTiers(); len(tiers) > 0 {
+		tr.AddTrackers(tiers)
+	}
 
-	// 等待元数据（磁力链需 DHT/PEX 发现）
+	// 等待元数据（磁力链需 DHT/PEX/Tracker 发现）；期间持续回报节点数，别让人干等
 	p.setTaskMsg(t.ID, "正在获取种子信息（DHT/Tracker 发现中）...")
-	select {
-	case <-tr.GotInfo():
-	case <-time.After(3 * time.Minute):
-		return fmt.Errorf("获取种子信息超时：无有效节点或无人做种")
+	tick := time.NewTicker(10 * time.Second)
+	defer tick.Stop()
+	deadline := time.NewTimer(3 * time.Minute)
+	defer deadline.Stop()
+waitInfo:
+	for {
+		select {
+		case <-tr.GotInfo():
+			break waitInfo
+		case <-tick.C:
+			st := tr.Stats()
+			p.setTaskMsg(t.ID, fmt.Sprintf("正在获取种子信息：已连接 peer %d / seed %d（若长期为 0，多半是出站 UDP 被限制）", st.ActivePeers, st.ConnectedSeeders))
+		case <-deadline.C:
+			st := tr.Stats()
+			return fmt.Errorf("获取种子信息超时（3 分钟）：始终没有连上有效节点（peer %d / seed %d）。"+
+				"常见原因：① 本机或所在内网限制了出站 UDP（DHT 依赖 UDP，很多企业网/校园网会封），"+
+				"② 该资源长期无人做种，③ 磁力链本身已失效", st.ActivePeers, st.ConnectedSeeders)
+		}
 	}
 	info := tr.Info()
 	props.RTName = info.BestName()
@@ -229,13 +249,47 @@ func (p *TaskPool) saveProps(id uint, props btProps) {
 	model.DB.Model(&model.Task{}).Where("id = ?", id).UpdateColumn("props", string(b))
 }
 
-// sniffOfflineKind 按 URL 特征判定离线任务类型
+// publicTrackerList 内置公共 tracker。
+//
+// 为什么要有：磁力链自带的 tracker 大量已下线，只依赖 DHT 时，内网/受限网络下
+// 经常 3 分钟都拿不到种子信息。补一批社区维护的公共 tracker 能显著提高连通率；
+// 库会自行忽略不可达的 tracker，所以多写几个没有副作用。
+// 只用 UDP 与 HTTPS：UDP 不走 HTTP 请求，HTTPS 由 BT 库自行发起（不经过离线下载的 SSRF 客户端）。
+var publicTrackerList = []string{
+	"udp://tracker.opentrackr.org:1337/announce",
+	"udp://open.tracker.cl:1337/announce",
+	"udp://tracker.openbittorrent.com:6969/announce",
+	"udp://exodus.desync.com:6969/announce",
+	"udp://tracker.torrent.eu.org:451/announce",
+	"udp://open.stealth.si:80/announce",
+	"udp://opentracker.i2p.rocks:6969/announce",
+	"udp://explodie.org:6969/announce",
+	"udp://tracker.dler.org:6969/announce",
+	"https://tracker.tamersunion.org:443/announce",
+}
+
+// publicTrackerTiers 转成 AddTrackers 需要的 [][]string（每个 tracker 单独一个 tier）
+func publicTrackerTiers() [][]string {
+	out := make([][]string, 0, len(publicTrackerList))
+	for _, t := range publicTrackerList {
+		out = append(out, []string{t})
+	}
+	return out
+}
+
+// sniffOfflineKind 按 URL 特征判定离线任务类型：bt / m3u8 / http
+//
+// 注意 m3u8 必须在 http 之前判定，否则 .m3u8 会被当成普通文件下载
+// —— 那样只会落下一个几百字节的清单文本，等于"下不了"。
 func sniffOfflineKind(url string) string {
 	u := strings.TrimSpace(url)
 	if strings.HasPrefix(u, "magnet:") {
 		return "bt"
 	}
 	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		if isM3U8URL(u) {
+			return "m3u8"
+		}
 		if strings.HasSuffix(strings.ToLower(u), ".torrent") {
 			return "bt"
 		}

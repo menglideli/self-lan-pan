@@ -207,6 +207,8 @@ func (h *AdminHandler) SettingsSet(c *gin.Context) {
 	for k, v := range in {
 		model.DB.Save(&model.SiteSetting{Key: k, Value: v})
 	}
+	// 运行时开关同步：offline_allow_private 影响离线下载的 SSRF 判定，存完立刻生效
+	ApplySSRFSetting(GetSiteSettings())
 	middleware.Audit(c, "admin", "更新站点设置")
 	dto.OK(c, GetSiteSettings())
 }

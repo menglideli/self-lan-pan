@@ -45,6 +45,9 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 
 		ug.GET("/policies", site.Policies)
 
+		// 本机访问地址枚举：多网卡的机器上，复制 WebDAV / 分享链接时由用户自己挑用哪张网卡
+		ug.GET("/system/addresses", site.Addresses)
+
 		ug.GET("/fs/list", site.List)
 		ug.POST("/fs/mkdir", site.Mkdir)
 		ug.POST("/fs/rename", site.Rename)

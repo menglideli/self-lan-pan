@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -137,6 +138,8 @@ func (p *TaskPool) run(t *model.Task) {
 	switch t.Type {
 	case "offline":
 		err = p.runOffline(t)
+	case "m3u8":
+		err = p.runM3U8(t)
 	case "bt":
 		err = p.runBT(t)
 	case "compress":
@@ -163,6 +166,8 @@ func taskTypeName(typ string) string {
 	switch typ {
 	case "offline":
 		return "HTTP 离线下载"
+	case "m3u8":
+		return "m3u8 视频下载"
 	case "bt":
 		return "BT/磁力链下载"
 	case "compress":
@@ -219,6 +224,8 @@ func (p *TaskPool) runOffline(t *model.Task) error {
 		PolicyID uint   `json:"policyId"`
 		Dest     string `json:"dest"`
 		Name     string `json:"name"`
+		Referer  string `json:"referer"`
+		UA       string `json:"ua"`
 	}
 	if err := json.Unmarshal([]byte(t.Props), &props); err != nil {
 		return err
@@ -236,18 +243,53 @@ func (p *TaskPool) runOffline(t *model.Task) error {
 		return err
 	}
 	// 尽量模拟浏览器请求头，降低多数 CDN 基于 UA/Referer 的防盗链 403
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+	ua := strings.TrimSpace(props.UA)
+	if ua == "" {
+		ua = defaultOfflineUA
+	}
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 	req.Header.Set("Connection", "keep-alive")
+	if ref := strings.TrimSpace(props.Referer); ref != "" {
+		req.Header.Set("Referer", ref)
+	}
 	resp, err := ssrfHTTP.Do(req) // SSRF 防护客户端（重定向复检 + 拨号层 IP 复检）
 	if err != nil {
+		if !SSRFAllowPrivate() {
+			return fmt.Errorf("%v（若目标在你的内网，可在管理台开启「允许离线下载访问内网地址」）", err)
+		}
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("下载失败 HTTP %d：该链接可能禁止服务器端下载（防盗链/需登录/需签名），请改用可直接访问的直链", resp.StatusCode)
+		return fmt.Errorf("下载失败 HTTP %d：该链接可能禁止服务器端下载（防盗链/需登录/需签名），请改用可直接访问的直链，或填写该站点所需的 Referer", resp.StatusCode)
 	}
+
+	// HLS 兜底：地址没带 .m3u8 后缀、但返回的其实是清单时，转 m3u8 流程。
+	// 不少站点把清单挂在 "/play?id=xxx" 这种无后缀地址上，只按后缀判断会把它当普通文件存下来
+	// —— 落到网盘里的就是一个几百字节的文本，看起来就是"m3u8 下不了"。
+	br := bufio.NewReaderSize(resp.Body, 1<<20)
+	if head, _ := br.Peek(1024); looksLikeM3U8Body(head, resp.Header.Get("Content-Type")) {
+		// 注意：Peek 不消费缓冲，下面的 ReadAll 读到的是「完整正文」（含刚 peek 的那段）。
+		// 早先这里又把它拼了一次 → 清单被当成两份解析，分片数直接翻倍（实测抓到）。
+		body, rerr := io.ReadAll(io.LimitReader(br, 8<<20))
+		if rerr != nil {
+			return fmt.Errorf("读取 m3u8 清单失败: %w", rerr)
+		}
+		finalURL := props.URL
+		if resp.Request != nil && resp.Request.URL != nil {
+			finalURL = resp.Request.URL.String()
+		}
+		mp := m3u8Props{
+			URL: props.URL, PolicyID: props.PolicyID, Dest: props.Dest, Name: props.Name,
+			Kind: "m3u8", Referer: props.Referer, UA: props.UA,
+		}
+		model.DB.Model(t).UpdateColumn("type", "m3u8")
+		p.saveAnyProps(t.ID, mp)
+		return p.runM3U8Task(t, mp, string(body), finalURL)
+	}
+
 	name := props.Name
 	if name == "" {
 		if u, perr := url.Parse(props.URL); perr == nil && path.Base(u.Path) != "/" && path.Base(u.Path) != "." {
@@ -290,7 +332,7 @@ func (p *TaskPool) runOffline(t *model.Task) error {
 			os.Remove(tmpPath)
 			return fmt.Errorf("已取消")
 		}
-		n, rerr := resp.Body.Read(buf)
+		n, rerr := br.Read(buf)
 		if n > 0 {
 			written += int64(n)
 			if written > offlineHardCap {
@@ -582,6 +624,10 @@ func (h *OfflineHandler) Create(c *gin.Context) {
 		Dest     string `json:"dest"`
 		URL      string `json:"url" binding:"required"`
 		Name     string `json:"name"`
+		// 可选请求头覆盖：相当多站点（尤其 m3u8）是按 Referer 判防盗链的
+		Referer string `json:"referer"`
+		UA      string `json:"ua"`
+		Threads int    `json:"threads"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		dto.Fail(c, 400, "参数错误")
@@ -597,10 +643,15 @@ func (h *OfflineHandler) Create(c *gin.Context) {
 	}
 	kind := sniffOfflineKind(in.URL)
 	trimmed := strings.TrimSpace(in.URL)
-	// SSRF 防护：非磁力链（http 直链 / .torrent）都按 URL 校验，禁止内网/保留地址
+	// SSRF 防护：非磁力链（http 直链 / .torrent / m3u8）都按 URL 校验，禁止内网/保留地址；
+	// 管理台开启「允许离线下载访问内网地址」后该判定整体放行
 	if !strings.HasPrefix(trimmed, "magnet:") {
 		if err := validateFetchURL(in.URL); err != nil {
-			dto.Fail(c, 400, err.Error())
+			msg := err.Error()
+			if !SSRFAllowPrivate() {
+				msg += "（若目标就在你的内网，可在管理台开启「允许离线下载访问内网地址」）"
+			}
+			dto.Fail(c, 400, msg)
 			return
 		}
 	}
@@ -620,10 +671,14 @@ func (h *OfflineHandler) Create(c *gin.Context) {
 	}
 	props, _ := json.Marshal(map[string]interface{}{
 		"url": in.URL, "policyId": in.PolicyID, "dest": dest, "name": in.Name, "kind": kind,
+		"referer": strings.TrimSpace(in.Referer), "ua": strings.TrimSpace(in.UA), "threads": in.Threads,
 	})
 	taskType := "offline"
-	if kind == "bt" {
+	switch kind {
+	case "bt":
 		taskType = "bt"
+	case "m3u8":
+		taskType = "m3u8"
 	}
 	t := &model.Task{UserID: x.user.ID, Type: taskType, Props: string(props)}
 	if err := pool.submit(t); err != nil {
@@ -637,7 +692,7 @@ func (h *OfflineHandler) Create(c *gin.Context) {
 func (h *OfflineHandler) List(c *gin.Context) {
 	x := ctxOf(c)
 	var items []model.Task
-	model.DB.Where("user_id = ? AND type IN ?", x.user.ID, []string{"offline", "bt"}).Order("id DESC").Limit(50).Find(&items)
+	model.DB.Where("user_id = ? AND type IN ?", x.user.ID, []string{"offline", "bt", "m3u8"}).Order("id DESC").Limit(50).Find(&items)
 	dto.OK(c, items)
 }
 

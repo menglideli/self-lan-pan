@@ -69,13 +69,30 @@
               <input class="input" v-model="davPwd" placeholder="设置/重置 WebDAV 密码" style="width: 260px" />
               <button class="btn" @click="doDavPwd">保存</button>
             </div>
-            <div v-if="session.perms?.allowWebdav" style="font-size: 12px; color: var(--text-3); margin-top: 6px; line-height: 1.9">
-              挂载地址：<b style="color: var(--text-2)">{{ davUrl }}</b>
-              <button class="btn" style="padding: 2px 8px; margin-left: 4px" @click="copyDavUrl">复制</button>
-              <br>
-              这一个地址就是全部挂载（不用一个个加）；只想单独挂某一个用 {{ davUrl }}&lt;挂载名&gt;/<br>
-              登录用网页账号 + 上面这个密码
-            </div>
+            <template v-if="session.perms?.allowWebdav">
+              <div class="dav-head">
+                <span>访问地址 —— 本机有多张网卡时，选一个「对方能访问到」的复制</span>
+                <button class="tool-btn" style="padding: 2px 8px; flex: none" @click="refreshAddrs()">刷新</button>
+              </div>
+              <div class="dav-list">
+                <div v-for="a in addresses" :key="a.ip" class="dav-row">
+                  <span class="dav-iface" :title="a.iface">{{ a.iface }}</span>
+                  <span v-if="isCurrent(a)" class="dav-tag cur">当前</span>
+                  <span v-else-if="a.kind === 'virtual'" class="dav-tag">虚拟网卡</span>
+                  <span class="dav-url">{{ a.url }}/dav/</span>
+                  <button class="btn" style="padding: 2px 10px; flex: none" @click="copyDav(a)">复制</button>
+                </div>
+                <div v-if="!addresses.length" class="dav-empty">
+                  没有枚举到可用地址（网卡可能未连接），可手动填写 http://&lt;本机IP&gt;:18322/dav/
+                </div>
+              </div>
+              <div class="dav-tip">
+                粘贴到手机的 WebDAV 客户端（ES 文件浏览器 / Solid Explorer / nPlayer 等）即可。<br>
+                这一个地址就是全部挂载（不用一个个加）；只想单独挂某一个用 &lt;地址&gt;&lt;挂载名&gt;/<br>
+                登录用网页账号 + 上面这个独立密码（<b>不是网页登录密码</b>）。<br>
+                <span v-if="lastCopied">已复制：<b>{{ lastCopied }}</b></span>
+              </div>
+            </template>
             <div v-else style="font-size: 12px; color: var(--text-3); margin-top: 6px">WebDAV 未启用</div>
           </div>
         </template>
@@ -109,16 +126,20 @@
             <select class="input" v-model.number="offPolicyId" style="width: 150px">
               <option v-for="p in policies" :key="p.id" :value="p.id">{{ p.name }} ({{ p.letter }})</option>
             </select>
-            <input class="input" v-model="offUrl" placeholder="支持 HTTP 直链 / 磁力链(magnet:) / .torrent 种子" style="flex: 1; min-width: 260px" />
+            <input class="input" v-model="offUrl" placeholder="HTTP 直链 / m3u8 视频 / .torrent 种子 / magnet: 磁力链" style="flex: 1; min-width: 260px" />
             <input class="input" v-model="offName" placeholder="文件名(可选)" style="width: 150px" />
+            <input class="input" v-model="offReferer" placeholder="Referer(可选，防盗链站点用)" style="width: 200px" />
             <select class="input" v-model="offDest" style="width: 130px">
               <option value="/">根目录</option>
               <option v-for="s in stars" :key="s.id" :value="s.path">{{ s.name }}</option>
             </select>
             <button class="btn primary" @click="addOffline" :disabled="!offUrl">添加任务</button>
           </div>
-          <div style="font-size: 11.5px; color: var(--text-3); margin-top: 8px">
-            磁力链/.torrent 由内置 BT 引擎（DHT+Tracker）下载，完成后自动导入所选磁盘；HTTP 链接为服务器代下载。
+          <div style="font-size: 11.5px; color: var(--text-3); margin-top: 8px; line-height: 1.8">
+            • <b>HTTP 直链</b>：服务器代下载；若该地址实际返回 m3u8 清单会自动转成 m3u8 下载。<br>
+            • <b>m3u8 视频</b>：自动选最高码率 → 并发抓分片 → AES-128 自动解密 → 合并保存为 <code>.ts</code>（用 VLC / PotPlayer / 手机播放器播放）。<br>
+            • <b>.torrent / magnet:</b> 由内置 BT 引擎（DHT + 公共 tracker）下载，完成后自动导入所选磁盘。<br>
+            • 内网地址（如 NAS、内网媒体服务器）默认被安全策略拒绝，需在「管理控制台 → 站点设置」开启<span style="color: var(--text-2)">「允许离线下载访问内网地址」</span>。
           </div>
           <table class="file-list" style="position: static">
             <thead><tr><th>文件</th><th>状态</th><th>进度</th><th>时间</th><th>操作</th></tr></thead>
@@ -150,6 +171,9 @@
         </template>
       </div>
     </div>
+
+    <!-- 多网卡地址选择：复制分享链接时让用户挑对外可达的地址 -->
+    <AddressPicker v-model:show="sharePickerShow" title="复制分享链接" :path="sharePickerPath" />
   </div>
 </template>
 
@@ -163,7 +187,9 @@ import { fsApi, shareApi, authApi } from '../api/modules'
 import { get as aget, post as apost, del as adel } from '../api/http'
 import { useToast, useUiDialog } from '../stores/dialog'
 import { copyText } from '../utils/clipboard'
+import { loadAddresses, withCurrentFirst, isCurrent, type LanAddr } from '../utils/lanaddr'
 import AppIcon from '../components/AppIcon.vue'
+import AddressPicker from '../components/AddressPicker.vue'
 
 const toast = useToast()
 const uiDlg = useUiDialog()
@@ -177,6 +203,7 @@ const policies = ref<any[]>([])
 const stars = ref<any[]>([])
 const offTasks = ref<any[]>([])
 const offUrl = ref(''); const offName = ref(''); const offDest = ref('/')
+const offReferer = ref('')
 const offPolicyId = ref(0)
 let pollTimer = 0
 
@@ -196,7 +223,10 @@ async function loadOffline() {
 }
 async function addOffline() {
   try {
-    await apost('/offline', { policyId: offPolicyId.value, dest: offDest.value, url: offUrl.value, name: offName.value || undefined })
+    await apost('/offline', {
+      policyId: offPolicyId.value, dest: offDest.value, url: offUrl.value,
+      name: offName.value || undefined, referer: offReferer.value.trim() || undefined
+    })
     offUrl.value = ''; offName.value = ''
     loadOffline()
   } catch (e: any) { toast.error(e.message) }
@@ -233,6 +263,7 @@ const initial = computed(() => (session.user?.nickname || 'C').charAt(0).toUpper
 onMounted(() => {
   loadShares()
   loadOffline()
+  refreshAddrs(false) // 地址列表用缓存的，避免每次开设置页都打一次接口
   pollTimer = window.setInterval(() => { if (tab.value === 'offline') loadOffline() }, 3000)
 })
 onBeforeUnmount(() => clearInterval(pollTimer))
@@ -248,15 +279,26 @@ async function doChangePwd() {
 async function doDavPwd() {
   try { await authApi.setWebdavPassword(davPwd.value); toast.success('WebDAV 密码已设置'); davPwd.value = '' } catch (e: any) { toast.error(e.message) }
 }
-// WebDAV 统一入口：按当前访问地址推算，省得用户自己拼服务器地址
-const davUrl = computed(() => location.origin + '/dav/')
-function copyDavUrl() {
-  copyText(davUrl.value).then(ok => ok ? toast.success('WebDAV 地址已复制') : toast.error('复制失败，请手动选择复制'))
+// WebDAV 访问地址：不再用 location.origin 猜（多网卡的机器上会给出别人打不开的地址），
+// 改为由后端枚举本机全部网卡地址，逐条列出让用户自己挑。
+const addresses = ref<LanAddr[]>([])
+const lastCopied = ref('')
+async function refreshAddrs(force = true) {
+  addresses.value = withCurrentFirst(await loadAddresses(force))
 }
+function copyDav(a: LanAddr) {
+  const u = a.url + '/dav/'
+  copyText(u).then(ok => {
+    if (ok) { lastCopied.value = u; toast.success('WebDAV 地址已复制') }
+    else toast.error('复制失败，请手动选择复制')
+  })
+}
+// 分享链接：多网卡时弹窗让用户挑一个对方能访问的地址
+const sharePickerShow = ref(false)
+const sharePickerPath = ref('')
 function copyShare(s: any) {
-  // HTTP 环境（非安全上下文）下 navigator.clipboard 不可用，copyText 内部回退 execCommand
-  copyText(location.origin + location.pathname + '#/s/' + s.token + (s.passwordHash ? '  提取码见分享设置' : ''))
-    .then(ok => ok ? toast.success('链接已复制') : toast.error('复制失败，请手动选择链接复制'))
+  sharePickerPath.value = '/#/s/' + s.token + (s.passwordHash ? '  提取码见分享设置' : '')
+  sharePickerShow.value = true
 }
 async function cancelShare(s: any) {
   try { await shareApi.cancel(s.id); loadShares() } catch (e: any) { alert(e.message) }
@@ -269,6 +311,30 @@ function fmt(n: number) {
 </script>
 
 <style scoped>
+/* ---- WebDAV 访问地址列表：多网卡逐条展示 + 各自复制 ---- */
+.dav-head {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  font-size: 12px; color: var(--text-3);
+}
+.dav-list { margin-top: 6px; max-width: 660px; }
+.dav-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border: 1px solid var(--stroke-b); border-radius: 7px; margin-bottom: 5px;
+  background: var(--bg50);
+}
+.dav-iface {
+  flex: none; max-width: 190px; font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dav-tag {
+  flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--stroke); color: var(--text-3);
+}
+.dav-tag.cur { color: var(--theme-2); border-color: color-mix(in srgb, var(--theme-2) 45%, transparent); }
+.dav-url { flex: 1; font-size: 12.5px; color: var(--text); word-break: break-all; }
+.dav-empty { font-size: 12px; color: var(--text-3); padding: 8px 10px; }
+.dav-tip { font-size: 12px; color: var(--text-3); margin-top: 8px; line-height: 1.9; }
+
 .side-item {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px;
   font-size: 13.5px; cursor: pointer; color: var(--text-2); margin-bottom: 2px;

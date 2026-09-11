@@ -32,7 +32,9 @@
 3. `C/`、`D/` 曾被放在仓库目录下当挂载根 —— 属运行数据，`.gitignore` 已挡，别再提交。
 4. ~~`middleware/guest.go`、`model.IsGuestUser`、`model.GuestUsername`~~ —— **已于批次 2 删除**，游客体系整体移除。
 5. `dlink.go`（直链签名）复用了 `office.go` 里定义的 `officeTarget` 类型当载荷。删 Office 时必须先把这个类型迁走或内联，否则直链功能编译不过。
-6. `middleware/security.go` 的 CSP 目前按站点配置的 ONLYOFFICE origin 动态放行（`dsOrigins()` + `buildCSP()`）。Office 删掉后这里应简化为静态 CSP —— 那等于彻底不再放行任何第三方 origin，是安全收益，别退回通配。
+6. ~~`middleware/security.go` 的 CSP 按 ONLYOFFICE origin 动态放行~~ —— **已于批次 4c 改为静态 CSP**（`dsOrigins()`/`buildCSP()` 已删）。现在**不再放行任何第三方 origin**，是安全收益；今后接第三方服务请按最小必要精确加 origin，别退回通配。
+7. **公共代码会"借住"在功能文件里**：`office.go` 除 ONLYOFFICE 外还定义了 `CloudAuth`（云盘 OAuth 授权，**保留功能**）和 `publicBaseOf()` / `parseUintQuery()`。删这类文件前**必须先列出它的顶层声明**，把不属于该功能的符号先迁走（本次落在 `handler/cloudauth.go`），否则编译直接崩。
+8. **`Share.AllowEdit` 已删除**（`office.go` 是它唯一的读取方）。DB 的 `allow_edit` 列保留未迁移，无害；别再在前端加回「允许在线编辑」开关。
 
 ## 已锁定的改造决策（2026-09-11 用户拍板）
 登录页只留密码框；文件管理器不要盘符、根视图直接列挂载点；挂载入口放文件管理器内（后端需新增目录浏览接口）；手机先走 WebDAV；公开分享暂留；**用户组 / 权限模型彻底删除、权限写死为管理员全开**（配额不限；`RecycleRetentionDays: 0` = 回收站永久保留，系统不再有任何"按时间自动物理删用户文件"的行为）。
@@ -45,5 +47,6 @@ README 描述的功能面大于实际裁剪目标。**核对功能时不要拿 R
 - 批次 1 ✅：删游客清理任务、关用户目录隔离、移除游客登录。
 - 批次 2 ✅ `c410cfd`（后端）+ `cecceea`（前端）：删注册 / 用户管理 / 用户组 / 站内共享，权限写死为 `model.AdminPerms()`。
 - 批次 3 ✅ `cecceea`：只留 win12 主题，macos / deepin 整包删除。
-- 批次 4 进行中：4a / 4b 已删 计算器、壁纸中心、图库、网络测速、内置浏览器、终端（含 sshfs/SFTP 与 `apps/terminal/` 子树）；4c（Office 全链路 + 设置 / 管理台瘦身）未做。
+- 批次 4 ✅ `4e3da53`（4a/4b）+ `3992d50`（4c）：删掉 7 个应用 —— 计算器、壁纸中心、图库、网络测速、内置浏览器、终端（含 sshfs/SFTP 与 `apps/terminal/` 子树）、在线 Office（含本地 docx/xlsx/pptx 预览，用户拍板"全删"）。同时删 `Share.AllowEdit` 死字段、CSP 简化成静态策略。
+- 桌面实测只剩：此电脑 / 回收站 / 记事本 / 任务中心 / 应用中心 / 设置 / 管理控制台（媒体中心是 installable，装后才出现）。apps 清单只剩 10 个 key。
 - 待做：批次 5（文件管理器根视图列挂载点、无盘符）、批次 6（挂载菜单：目录浏览接口 + 文件夹选择器）、批次 7（全链路构建 + 冒烟 + 重写 README）。

@@ -15,14 +15,10 @@ import (
 
 type AuthHandler struct{ Secret []byte }
 
-// issueTokens 签发「访问令牌 + 刷新令牌」对：
-// 访问 7 天（游客 24h），刷新 30 天（游客 7 天）。二者共用同一 Claims 结构
-// 与 TokenVer 版本化——改密后旧刷新令牌同样失效，无额外安全面。
+// issueTokens 签发「访问令牌 + 刷新令牌」对：访问 7 天，刷新 30 天。
+// 二者共用同一 Claims 结构与 TokenVer 版本化——改密后旧令牌同样失效。
 func (h *AuthHandler) issueTokens(u *model.User) (string, string, error) {
 	ttl, refresh := 7*24*time.Hour, 30*24*time.Hour
-	if model.IsGuestUser(u) {
-		ttl, refresh = 24*time.Hour, 7*24*time.Hour
-	}
 	token, err := middleware.MakeToken(u.ID, u.Role, u.TokenVer, h.Secret, ttl)
 	if err != nil {
 		return "", "", err
@@ -136,31 +132,6 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 	dto.OK(c, gin.H{"token": token, "refreshToken": rt, "user": u, "isGuest": model.IsGuestUser(&u)})
-}
-
-// GuestLogin 游客登录：登录页「游客登录」入口。
-// 无需凭据，直接为共享游客账号（guest，访客组）签发短时效令牌（24h）。
-// 前置：站点开关 guest_login 非 "false"（默认开）且游客账号存在且未被禁用。
-func (h *AuthHandler) GuestLogin(c *gin.Context) {
-	s := GetSiteSettings()
-	if s["guest_login"] == "false" {
-		dto.Fail(c, 403, "游客登录未开启")
-		return
-	}
-	var u model.User
-	if err := model.DB.Where("username = ?", model.GuestUsername).First(&u).Error; err != nil || u.Disabled {
-		dto.Fail(c, 403, "游客登录未开启")
-		return
-	}
-	now := time.Now()
-	model.DB.Model(&u).UpdateColumn("last_login_at", &now)
-	token, rt, err := h.issueTokens(&u)
-	if err != nil {
-		dto.Fail(c, 500, "签发令牌失败")
-		return
-	}
-	model.DB.Create(&model.AuditLog{UserID: u.ID, Username: u.Username, Action: "guest-login", Detail: "游客登录", IP: c.ClientIP()})
-	dto.OK(c, gin.H{"token": token, "refreshToken": rt, "user": u, "isGuest": true})
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {

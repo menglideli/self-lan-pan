@@ -49,15 +49,8 @@ func (d *DavFS) physical(ctx context.Context, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	root := p.RootPath
-	if v := ctx.Value(davUserKey{}); v != nil {
-		if u, ok := v.(*model.User); ok {
-			if dir := fscore.UserDirOf(u); dir != "" { // 多用户数据隔离
-				root = filepath.Join(root, dir)
-			}
-		}
-	}
-	ld, err := fscore.NewLocal(root)
+	// 单用户私有部署：挂载根即真实目录，不做用户子目录隔离
+	ld, err := fscore.NewLocal(p.RootPath)
 	if err != nil {
 		return "", err
 	}

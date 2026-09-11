@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,12 +22,9 @@ import (
 
 func fsService(cfg *config.Config) *fscore.Service {
 	// 注册全部存储驱动（工厂统一为 策略+用户 签名；云盘忽略用户）
-	fscore.RegisterDriver("local", func(p *model.Policy, u *model.User) (fscore.Driver, error) {
-		root := p.RootPath
-		if dir := fscore.UserDirOf(u); dir != "" { // 多用户数据隔离：每用户独立子目录
-			root = filepath.Join(root, dir)
-		}
-		return fscore.NewLocal(root)
+	// 单用户私有部署：本地盘不再按用户拼子目录，策略的挂载根就是真实目录
+	fscore.RegisterDriver("local", func(p *model.Policy, _ *model.User) (fscore.Driver, error) {
+		return fscore.NewLocal(p.RootPath)
 	})
 	fscore.RegisterDriver("pan123", func(p *model.Policy, _ *model.User) (fscore.Driver, error) { return driver.NewPan123(p) })
 	fscore.RegisterDriver("aliyun", func(p *model.Policy, _ *model.User) (fscore.Driver, error) { return driver.NewAliyun(p) })

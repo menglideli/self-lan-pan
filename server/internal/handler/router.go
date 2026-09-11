@@ -17,13 +17,11 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 	// 登录/注册按来源 IP 限速，防密码暴破与批量注册
 	loginLimiter := middleware.NewIPRateLimiter(10, 5) // 10 次/分钟，突发 5
 	regLimiter := middleware.NewIPRateLimiter(5, 2)    // 5 次/小时，突发 2
-	// 游客登录是匿名默认入口，限流比账号登录宽松但仍防爆刷
-	guestLimiter := middleware.NewIPRateLimiter(30, 10) // 30 次/分钟，突发 10
 	// 刷新令牌续期：401 静默续期入口，独立限流防刷
 	refreshLimiter := middleware.NewIPRateLimiter(30, 10) // 30 次/分钟，突发 10
 	api.POST("/auth/login", middleware.RateLimit(loginLimiter), auth.Login)
 	api.POST("/auth/register", middleware.RateLimit(regLimiter), auth.Register)
-	api.POST("/auth/guest", middleware.RateLimit(guestLimiter), auth.GuestLogin)
+	// 单用户私有部署：不提供游客登录入口（原 POST /auth/guest 已移除）
 	api.POST("/auth/refresh", middleware.RateLimit(refreshLimiter), auth.Refresh)
 
 	// 公开分享（受「公开分享」功能门控）

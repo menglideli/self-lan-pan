@@ -102,7 +102,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	model.DB.Create(&model.AuditLog{UserID: u.ID, Username: u.Username, Action: "login", Detail: "用户登录", IP: c.ClientIP()})
-	dto.OK(c, gin.H{"token": token, "refreshToken": rt, "user": u, "isGuest": model.IsGuestUser(&u)})
+	dto.OK(c, gin.H{"token": token, "refreshToken": rt, "user": u})
 }
 
 // Refresh 刷新令牌静默续期（TabOS /auth/refresh 同款模式）：
@@ -131,60 +131,13 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		dto.Fail(c, 500, "签发令牌失败")
 		return
 	}
-	dto.OK(c, gin.H{"token": token, "refreshToken": rt, "user": u, "isGuest": model.IsGuestUser(&u)})
-}
-
-func (h *AuthHandler) Register(c *gin.Context) {
-	var in struct {
-		Username   string `json:"username" binding:"required,min=2,max=32"`
-		Password   string `json:"password" binding:"required,min=6,max=64"`
-		Nickname   string `json:"nickname"`
-		InviteCode string `json:"inviteCode"`
-	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		dto.Fail(c, 400, "参数错误：用户名 2-32 位，密码至少 6 位")
-		return
-	}
-	settings := GetSiteSettings()
-	if settings["register_open"] != "true" {
-		dto.Fail(c, 4003, "本站未开放注册")
-		return
-	}
-	if code := settings["register_invite_code"]; code != "" && code != in.InviteCode {
-		dto.Fail(c, 4004, "邀请码错误")
-		return
-	}
-	var n int64
-	model.DB.Model(&model.User{}).Where("username = ?", in.Username).Count(&n)
-	if n > 0 {
-		dto.Fail(c, 4005, "用户名已存在")
-		return
-	}
-	var g model.UserGroup
-	if err := model.DB.Where("is_default = ?", true).First(&g).Error; err != nil {
-		dto.Fail(c, 500, "默认用户组缺失")
-		return
-	}
-	nickname := in.Nickname
-	if nickname == "" {
-		nickname = in.Username
-	}
-	u := model.User{Username: in.Username, PasswordHash: hashPassword(in.Password), Nickname: nickname, Role: "user", GroupID: g.ID}
-	if err := model.DB.Create(&u).Error; err != nil {
-		dto.Fail(c, 500, "注册失败")
-		return
-	}
-	token, rt, _ := h.issueTokens(&u)
-	dto.OK(c, gin.H{"token": token, "refreshToken": rt, "user": u, "isGuest": false})
+	dto.OK(c, gin.H{"token": token, "refreshToken": rt, "user": u})
 }
 
 func (h *AuthHandler) Me(c *gin.Context) {
 	u := middleware.CurrentUser(c)
-	var g model.UserGroup
-	model.DB.First(&g, u.GroupID)
-	// isGuest：前端据此隐藏账号自管理入口（改密/改昵称/WebDAV 密码等）；
-	// 后端兜底拦截见 middleware.GuestReadOnly
-	dto.OK(c, gin.H{"user": u, "group": g, "isGuest": model.IsGuestUser(u)})
+	// perms：权限档案（单用户私有部署写死在代码里，前端据此决定功能入口显隐）
+	dto.OK(c, gin.H{"user": u, "perms": model.AdminPerms()})
 }
 
 func (h *AuthHandler) UpdateMe(c *gin.Context) {

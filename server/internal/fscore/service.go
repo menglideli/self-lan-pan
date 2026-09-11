@@ -49,7 +49,7 @@ func (s *Service) Invalidate(policyID uint) {
 }
 
 // Resolve 校验用户可用性并返回策略与该用户视角的驱动（本地策略 = 用户隔离目录）
-func (s *Service) Resolve(user *model.User, group *model.UserGroup, policyID uint) (*model.Policy, Driver, error) {
+func (s *Service) Resolve(user *model.User, group *model.Perms, policyID uint) (*model.Policy, Driver, error) {
 	var p model.Policy
 	if err := model.DB.First(&p, policyID).Error; err != nil {
 		return nil, nil, errors.New("存储策略不存在")
@@ -70,7 +70,9 @@ func (s *Service) Resolve(user *model.User, group *model.UserGroup, policyID uin
 // ---- 秒传哈希索引 ----
 
 // LookupHash 查询秒传索引（导出供 handler 使用）
-func (s *Service) LookupHash(hash string, size int64) *model.FileHash { return s.lookupHash(hash, size) }
+func (s *Service) LookupHash(hash string, size int64) *model.FileHash {
+	return s.lookupHash(hash, size)
+}
 
 func (s *Service) lookupHash(hash string, size int64) *model.FileHash {
 	if hash == "" || size <= 0 {

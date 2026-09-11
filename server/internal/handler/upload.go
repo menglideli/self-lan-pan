@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -68,7 +67,7 @@ func (h *UploadHandler) Init(c *gin.Context) {
 	if in.ChunkSize < 1<<10 || in.ChunkSize > 64<<20 {
 		in.ChunkSize = 8 << 20
 	}
-	p, d, err := h.Site.Fs.Resolve(x.user, x.group, in.PolicyID)
+	p, d, err := h.Site.Fs.Resolve(x.user, x.perm, in.PolicyID)
 	if err != nil {
 		dto.Fail(c, 403, err.Error())
 		return
@@ -81,7 +80,7 @@ func (h *UploadHandler) Init(c *gin.Context) {
 	{
 		var u model.User
 		if model.DB.First(&u, x.user.ID).Error == nil {
-			if limit, limited := effectiveQuotaBytes(&u, x.group); limited && u.UsedBytes+in.Size > limit {
+			if limit, limited := effectiveQuotaBytes(&u, x.perm); limited && u.UsedBytes+in.Size > limit {
 				NotifyQuotaExceeded(x.user.ID, limit>>20, u.UsedBytes)
 				dto.Fail(c, 403, fmt.Sprintf("超出配额：已用 %dMB / 上限 %dMB", u.UsedBytes>>20, limit>>20))
 				return
@@ -114,12 +113,6 @@ func (h *UploadHandler) Init(c *gin.Context) {
 		if err := h.Site.Fs.InstantPut(fh, phys, x.user.ID, in.PolicyID, vp); err != nil {
 			dto.Fail(c, 500, "秒传失败："+err.Error())
 			return
-		}
-		// 游客秒传：硬链接会继承源文件 mtime（可能已远超 24h），
-		// 而游客文件按 mtime 做 24h TTL 清理——必须把时间戳重置为"现在"，
-		// 否则游客秒传的文件会被立即清掉
-		if model.IsGuestUser(x.user) {
-			_ = os.Chtimes(phys, time.Now(), time.Now())
 		}
 		// 配额原子提交：超限则回滚刚落盘文件（旧版本归档保留，可从版本历史恢复）
 		if !commitQuotaUpload(c, x, in.Size-oldSize) {

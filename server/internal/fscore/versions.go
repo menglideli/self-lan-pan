@@ -114,22 +114,18 @@ func PurgeDirVersions(policyID uint, dirVP string) {
 	}
 }
 
-// PruneAll 周期清理：按各用户组的版本保留天数删除过期版本
+// PruneAll 周期清理：按权限档案的版本保留天数删除过期版本。
+// 单用户私有部署下档案为 AdminPerms（VersionRetentionDays = 0 = 永久保留），
+// 因此默认不会删除任何版本文件。
 func PruneAll() {
-	var groups []model.UserGroup
-	model.DB.Find(&groups)
-	gm := map[uint]model.UserGroup{}
-	for _, g := range groups {
-		gm[g.ID] = g
+	g := model.AdminPerms()
+	if g.VersionRetentionDays <= 0 {
+		return
 	}
 	var users []model.User
-	model.DB.Select("id", "group_id").Find(&users)
+	model.DB.Select("id").Find(&users)
+	cutoff := time.Now().AddDate(0, 0, -g.VersionRetentionDays)
 	for _, u := range users {
-		g, ok := gm[u.GroupID]
-		if !ok || g.VersionRetentionDays <= 0 {
-			continue
-		}
-		cutoff := time.Now().AddDate(0, 0, -g.VersionRetentionDays)
 		var vers []model.FileVersion
 		model.DB.Where("user_id = ? AND created_at < ?", u.ID, cutoff).Find(&vers)
 		for _, v := range vers {
@@ -163,20 +159,14 @@ func pruneVersions(policyID, userID uint, vp string) {
 	}
 }
 
+// versionPolicyOf 版本保留策略：单用户私有部署取自代码写死的 AdminPerms
 func versionPolicyOf(userID uint) (keep, days int) {
-	keep, days = 10, 0
-	var u model.User
-	if err := model.DB.Select("group_id").First(&u, userID).Error; err != nil {
-		return
+	g := model.AdminPerms()
+	keep, days = g.KeepVersions, g.VersionRetentionDays
+	if keep == 0 {
+		keep = 10
 	}
-	var g model.UserGroup
-	if err := model.DB.Select("keep_versions", "version_retention_days").First(&g, u.GroupID).Error; err != nil {
-		return
-	}
-	if g.KeepVersions != 0 {
-		keep = g.KeepVersions
-	}
-	days = g.VersionRetentionDays
+	_ = userID
 	return
 }
 

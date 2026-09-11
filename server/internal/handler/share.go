@@ -48,7 +48,7 @@ type shareCreateIn struct {
 func (h *ShareHandler) Create(c *gin.Context) {
 	x := ctxOf(c)
 	// 管理员豁免用户组分享限制（用户与管理员均可发起分享/共享）
-	if x.user.Role != "admin" && !x.group.AllowShare {
+	if x.user.Role != "admin" && !x.perm.AllowShare {
 		dto.Fail(c, 403, "当前用户组不允许分享")
 		return
 	}
@@ -57,7 +57,7 @@ func (h *ShareHandler) Create(c *gin.Context) {
 		dto.Fail(c, 400, "参数错误")
 		return
 	}
-	p, d, err := h.Site.Fs.Resolve(x.user, x.group, in.PolicyID)
+	p, d, err := h.Site.Fs.Resolve(x.user, x.perm, in.PolicyID)
 	if err != nil {
 		dto.Fail(c, 403, err.Error())
 		return
@@ -74,7 +74,7 @@ func (h *ShareHandler) Create(c *gin.Context) {
 	}
 	allowDl := true
 	if in.AllowDownload != nil {
-		allowDl = *in.AllowDownload && x.group.ShareAllowDownload
+		allowDl = *in.AllowDownload && x.perm.ShareAllowDownload
 	}
 	preview := true
 	if in.PreviewEnabled != nil {
@@ -154,9 +154,9 @@ func (h *ShareHandler) shareDataDir(token string) string {
 
 // shareDataMeta 密文清单条目
 type shareDataMeta struct {
-	Size    int64 `json:"size"`
-	Mtime   int64 `json:"mtime"` // 原文件 unix ms（展示用）
-	Name    string `json:"name"` // 原文件名（下载 disposition 用）
+	Size  int64  `json:"size"`
+	Mtime int64  `json:"mtime"` // 原文件 unix ms（展示用）
+	Name  string `json:"name"`  // 原文件名（下载 disposition 用）
 }
 
 func (h *ShareHandler) manifestPath(token string) string {
@@ -337,7 +337,7 @@ func (h *ShareHandler) SaveToDrive(c *gin.Context) {
 		return
 	}
 	x := ctxOf(c)
-	if x.user.Role != "admin" && x.group.ReadOnly {
+	if x.user.Role != "admin" && x.perm.ReadOnly {
 		dto.Fail(c, 403, "该用户组为只读，仅可查看和下载")
 		return
 	}
@@ -364,7 +364,7 @@ func (h *ShareHandler) SaveToDrive(c *gin.Context) {
 		}
 		srcVP = joined
 	}
-	dp, dd, err := h.Site.Fs.Resolve(x.user, x.group, in.PolicyID)
+	dp, dd, err := h.Site.Fs.Resolve(x.user, x.perm, in.PolicyID)
 	if err != nil {
 		dto.Fail(c, 403, err.Error())
 		return
@@ -753,17 +753,10 @@ func (h *ShareHandler) serveEncryptedFile(c *gin.Context, sh *model.Share, targe
 	_ = fi
 }
 
-// shareOwnerSpeed 分享者所在用户组的下载限速（KB/s，0 = 不限速）
+// shareOwnerSpeed 分享者的下载限速（KB/s，0 = 不限速）。
+// 单用户私有部署：限速取自代码写死的权限档案，不再按用户组查询。
 func shareOwnerSpeed(ownerID uint) int64 {
-	var u model.User
-	if err := model.DB.First(&u, ownerID).Error; err != nil {
-		return 0
-	}
-	var g model.UserGroup
-	if err := model.DB.First(&g, u.GroupID).Error; err != nil {
-		return 0
-	}
-	return g.DownloadSpeedKB
+	return model.AdminPerms().DownloadSpeedKB
 }
 
 // 防越界：查询参数是相对分享根的路径（前端约定），一律锚定到分享根下；

@@ -105,11 +105,8 @@ func (p *TaskPool) runBT(t *model.Task) error {
 	}
 	// 配额预检：已知总大小且将超限时不开始下载
 	if u := userOfID(t.UserID); u != nil {
-		var g model.UserGroup
-		if model.DB.First(&g, u.GroupID).Error == nil {
-			if limit, limited := effectiveQuotaBytes(u, &g); limited && u.UsedBytes+total > limit {
-				return fmt.Errorf("超出配额（已用 %dMB / 上限 %dMB），未开始下载", u.UsedBytes>>20, limit>>20)
-			}
+		if limit, limited := effectiveQuotaBytes(u, model.AdminPerms()); limited && u.UsedBytes+total > limit {
+			return fmt.Errorf("超出配额（已用 %dMB / 上限 %dMB），未开始下载", u.UsedBytes>>20, limit>>20)
 		}
 	}
 	tr.DownloadAll()

@@ -87,14 +87,10 @@ func AdminOnly() gin.HandlerFunc {
 	}
 }
 
-// GroupOf 返回用户所在用户组（带缓存兜底查询）
-func GroupOf(c *gin.Context) *model.UserGroup {
-	u := CurrentUser(c)
-	var g model.UserGroup
-	if err := model.DB.First(&g, u.GroupID).Error; err != nil {
-		model.DB.Where("is_default = ?", true).First(&g)
-	}
-	return &g
+// PermsOf 返回当前用户的权限档案。
+// 单用户私有部署：用户组已删除，权限写死在 model.AdminPerms()，不做任何查询。
+func PermsOf(*gin.Context) *model.Perms {
+	return model.AdminPerms()
 }
 
 // Audit 记录审计日志

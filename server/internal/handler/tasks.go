@@ -60,26 +60,20 @@ func (p *TaskPool) sweepLoop() {
 	}
 }
 
-// sweepRecycle 按用户组的回收站保留天数永久删除超期项，并回补配额
+// sweepRecycle 按权限档案的回收站保留天数永久删除超期项，并回补配额。
+//
+// 单用户私有部署下档案为 AdminPerms，RecycleRetentionDays = 0（永久保留），
+// 因此本函数默认直接返回、不删除任何东西 —— 这是刻意的：不做"按时间自动删用户文件"。
+// 若将来要通过回收站保留策略清理，改 model.AdminPerms() 里的天数即可。
 func (p *TaskPool) sweepRecycle() {
-	var groups []model.UserGroup
-	model.DB.Where("recycle_retention_days > 0").Find(&groups)
-	cutoffs := map[uint]time.Time{}
-	gids := make([]uint, 0, len(groups))
-	for _, g := range groups {
-		cutoffs[g.ID] = time.Now().Add(-time.Duration(g.RecycleRetentionDays) * 24 * time.Hour)
-		gids = append(gids, g.ID)
-	}
-	if len(gids) == 0 {
+	days := model.AdminPerms().RecycleRetentionDays
+	if days <= 0 {
 		return
 	}
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	var users []model.User
-	model.DB.Where("group_id IN ?", gids).Find(&users)
+	model.DB.Select("id").Find(&users)
 	for _, u := range users {
-		cutoff, ok := cutoffs[u.GroupID]
-		if !ok {
-			continue
-		}
 		var items []model.RecycleItem
 		model.DB.Where("user_id = ? AND deleted_at < ?", u.ID, cutoff).Find(&items)
 		for _, item := range items {
@@ -282,11 +276,8 @@ func (p *TaskPool) runOffline(t *model.Task) error {
 	if total > 0 {
 		var u model.User
 		if model.DB.First(&u, t.UserID).Error == nil {
-			var g model.UserGroup
-			if model.DB.First(&g, u.GroupID).Error == nil {
-				if limit, limited := effectiveQuotaBytes(&u, &g); limited && u.UsedBytes+total > limit {
-					return fmt.Errorf("超出配额（已用 %dMB / 上限 %dMB），未开始下载", u.UsedBytes>>20, limit>>20)
-				}
+			if limit, limited := effectiveQuotaBytes(&u, model.AdminPerms()); limited && u.UsedBytes+total > limit {
+				return fmt.Errorf("超出配额（已用 %dMB / 上限 %dMB），未开始下载", u.UsedBytes>>20, limit>>20)
 			}
 		}
 	}
@@ -434,11 +425,8 @@ func (p *TaskPool) runCompress(t *model.Task) error {
 	// 配额预检（用户个人覆盖优先）：超限则失败，不落盘
 	var u model.User
 	if model.DB.First(&u, t.UserID).Error == nil {
-		var g model.UserGroup
-		if model.DB.First(&g, u.GroupID).Error == nil {
-			if limit, limited := effectiveQuotaBytes(&u, &g); limited && u.UsedBytes+archSize > limit {
-				return fmt.Errorf("超出配额（已用 %dMB / 上限 %dMB），压缩结果未保存", u.UsedBytes>>20, limit>>20)
-			}
+		if limit, limited := effectiveQuotaBytes(&u, model.AdminPerms()); limited && u.UsedBytes+archSize > limit {
+			return fmt.Errorf("超出配额（已用 %dMB / 上限 %dMB），压缩结果未保存", u.UsedBytes>>20, limit>>20)
 		}
 	}
 	f, err := os.Open(tmpZip)
@@ -493,11 +481,7 @@ func (p *TaskPool) runDecompress(t *model.Task) error {
 		if model.DB.First(&u, t.UserID).Error != nil {
 			return nil
 		}
-		var g model.UserGroup
-		if model.DB.First(&g, u.GroupID).Error != nil {
-			return nil
-		}
-		if limit, limited := effectiveQuotaBytes(&u, &g); limited && u.UsedBytes+total > limit {
+		if limit, limited := effectiveQuotaBytes(&u, model.AdminPerms()); limited && u.UsedBytes+total > limit {
 			return fmt.Errorf("超出配额（已用 %dMB / 上限 %dMB），解压未开始", u.UsedBytes>>20, limit>>20)
 		}
 		return nil
@@ -589,7 +573,7 @@ type OfflineHandler struct{}
 
 func (h *OfflineHandler) Create(c *gin.Context) {
 	x := ctxOf(c)
-	if !x.group.AllowOffline {
+	if !x.perm.AllowOffline {
 		dto.Fail(c, 403, "当前用户组未启用离线下载")
 		return
 	}
@@ -607,7 +591,7 @@ func (h *OfflineHandler) Create(c *gin.Context) {
 	if err != nil || dest == "" {
 		dest = "/"
 	}
-	if !x.group.CanUsePolicy(in.PolicyID) && x.user.Role != "admin" {
+	if !x.perm.CanUsePolicy(in.PolicyID) && x.user.Role != "admin" {
 		dto.Fail(c, 403, "无权使用该存储")
 		return
 	}

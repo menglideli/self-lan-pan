@@ -164,18 +164,17 @@ func DavAuth() gin.HandlerFunc {
 			return
 		}
 		loginFails.Delete(lockKey)
-		var g model.UserGroup
-		model.DB.First(&g, u.GroupID)
-		if !g.AllowWebdav {
-			c.String(http.StatusForbidden, "当前用户组未启用 WebDAV")
+		// 单用户私有部署：WebDAV 可用性与只读标志都来自代码写死的权限档案
+		perm := model.AdminPerms()
+		if !perm.AllowWebdav {
+			c.String(http.StatusForbidden, "WebDAV 未启用")
 			c.Abort()
 			return
 		}
-		// 只读用户组：WebDAV 只放行读操作，拒绝一切变更请求
-		if g.ReadOnly {
+		if perm.ReadOnly {
 			switch c.Request.Method {
 			case http.MethodPut, http.MethodDelete, http.MethodPost, "MKCOL", "COPY", "MOVE", "PROPPATCH":
-				c.String(http.StatusForbidden, "当前用户组为只读")
+				c.String(http.StatusForbidden, "当前为只读模式")
 				c.Abort()
 				return
 			}

@@ -35,25 +35,21 @@ type OfficeHandler struct {
 	Site *SiteHandler
 	// Secret 站点 HMAC 密钥：匿名分享编辑器端点校验提取码 stoken 用（带提取码的分享）
 	Secret []byte
-	// LoadShare 共享可见性加载器（由 router 注入 UserShareHandler.loadShareByID）；
-	// 仅 Config（登录态）需要；File/Callback 走无用户上下文的 token 自授权解析
-	LoadShare func(c *gin.Context, id uint) (*model.UserShare, fscore.Driver, bool)
 }
 
 // officeTarget DS 拉取/回调目标：
-// kind=local → PolicyID+UID+Path（UID=文件属主，本地策略按属主隔离目录解析）
-// kind=shared → ShareID+Rel（共享内容属创建者，回调保存走创建者隔离目录）
-// kind=pub → ShareToken+Rel（公开分享链接；token 本身即授权，保存走分享者隔离目录）
+// kind=local → PolicyID+UID+Path（UID=文件属主）
+// kind=pub → ShareToken+Rel（公开分享链接；token 本身即授权）
+// 注：站内用户共享（kind=shared）随站内共享功能一并删除。
 type officeTarget struct {
-	Kind     string `json:"k"`
-	PolicyID uint   `json:"p"`
-	UID      uint   `json:"u"`
-	Path     string `json:"path"`
-	ShareID  uint   `json:"s"`
+	Kind       string `json:"k"`
+	PolicyID   uint   `json:"p"`
+	UID        uint   `json:"u"`
+	Path       string `json:"path"`
 	ShareToken string `json:"t"`
-	Rel      string `json:"r"`
+	Rel        string `json:"r"`
 	// Edit=false（view 签发）的 token 只允许拉取文件，回调保存一律拒绝——
-	// 否则只读组用户/只读共享查看者可持合法 token 伪造回调覆盖他人文件
+	// 否则只读身份可持合法 token 伪造回调覆盖文件
 	Edit bool  `json:"e"`
 	Exp  int64 `json:"exp"`
 }
@@ -187,28 +183,6 @@ func (h *OfficeHandler) verifyToken(tok string) (*officeTarget, error) {
 		return nil, errors.New("token 已过期")
 	}
 	return &t, nil
-}
-
-// resolveShared 从 token 解析共享文件（无用户上下文：token 本身即授权，
-// 但路径仍须落在共享根内，存储/共享失效则失败）
-func (h *OfficeHandler) resolveShared(t *officeTarget) (*model.UserShare, *model.Policy, fscore.Driver, string, error) {
-	var sh model.UserShare
-	if err := model.DB.First(&sh, t.ShareID).Error; err != nil {
-		return nil, nil, nil, "", errors.New("共享不存在或已取消")
-	}
-	var p model.Policy
-	if err := model.DB.First(&p, sh.PolicyID).Error; err != nil {
-		return nil, nil, nil, "", errors.New("存储已失效")
-	}
-	full, ok := userShareFull(&sh, t.Rel)
-	if !ok {
-		return nil, nil, nil, "", errors.New("路径越界")
-	}
-	d, err := h.Site.Fs.DriverFor(&p, userOfID(sh.OwnerID))
-	if err != nil {
-		return nil, nil, nil, "", err
-	}
-	return &sh, &p, d, full, nil
 }
 
 // loadPublicShare 公开分享加载（匿名上下文：分享 token 本身即凭据），
@@ -355,8 +329,7 @@ func (h *OfficeHandler) Health(c *gin.Context) {
 }
 
 // Config 签发编辑器配置
-// 本地盘：GET /api/office/config?policyId=&path=&mode=edit|view
-// 共享盘：GET /api/office/config?shareId=&rel=&mode=edit|view（ro 共享强制 view）
+// GET /api/office/config?policyId=&path=&mode=edit|view
 func (h *OfficeHandler) Config(c *gin.Context) {
 	u := middleware.CurrentUser(c)
 	x := ctxOf(c)
@@ -370,48 +343,24 @@ func (h *OfficeHandler) Config(c *gin.Context) {
 	if mode != "edit" && mode != "view" {
 		mode = "edit"
 	}
-	shareID := parseUintQuery(c, "shareId")
 	policyID := parseUintQuery(c, "policyId")
-	if shareID == 0 && policyID == 0 {
+	if policyID == 0 {
 		dto.Fail(c, 400, "参数错误")
 		return
 	}
-	var d fscore.Driver
-	var vp string
-	var keyPolicy uint // docKey 规范化的属主 policy（共享视图用创建者 policy，保证跨视图同 key）
-	editable := u.Role == "admin"
-	if shareID != 0 {
-		if h.LoadShare == nil {
-			dto.Fail(c, 500, "共享服务不可用")
-			return
-		}
-		sh, dd, ok := h.LoadShare(c, shareID)
-		if !ok {
-			return
-		}
-		full, ok := userShareFull(sh, c.Query("rel"))
-		if !ok {
-			dto.Fail(c, 403, "路径越界")
-			return
-		}
-		editable = sh.Perm == "rw" // 共享可写性只看共享授权（admin 也不能借 ro 共享写别人盘）
-		d, vp, keyPolicy = dd, full, sh.PolicyID
-	} else {
-		v, err := fscore.Clean(c.Query("path"))
-		if err != nil {
-			dto.Fail(c, 400, "参数错误")
-			return
-		}
-		_, dd, err := h.Site.Fs.Resolve(u, x.group, policyID)
-		if err != nil {
-			dto.Fail(c, 403, err.Error())
-			return
-		}
-		// 只读用户组（非 admin）只能 view，与 fs.go requireWritable 语义一致
-		editable = u.Role == "admin" || x.group == nil || !x.group.ReadOnly
-		d, vp, keyPolicy = dd, v, policyID
+	v, err := fscore.Clean(c.Query("path"))
+	if err != nil {
+		dto.Fail(c, 400, "参数错误")
+		return
 	}
-	if !editable {
+	_, d, err := h.Site.Fs.Resolve(u, x.perm, policyID)
+	if err != nil {
+		dto.Fail(c, 403, err.Error())
+		return
+	}
+	vp := v
+	// 只读权限档案（非 admin）只能 view，与 fs.go requireWritable 语义一致
+	if u.Role != "admin" && x.perm != nil && x.perm.ReadOnly {
 		mode = "view"
 	}
 	e, err := d.Stat(vp)
@@ -425,14 +374,9 @@ func (h *OfficeHandler) Config(c *gin.Context) {
 	}
 	ext := strings.TrimPrefix(strings.ToLower(path.Ext(vp)), ".")
 	editFlag := mode == "edit"
-	var fileToken string
-	if shareID != 0 {
-		fileToken = h.signFileToken(officeTarget{Kind: "shared", ShareID: shareID, Rel: strings.TrimPrefix(c.Query("rel"), "/"), Edit: editFlag})
-	} else {
-		fileToken = h.signFileToken(officeTarget{Kind: "local", PolicyID: policyID, UID: u.ID, Path: vp, Edit: editFlag})
-	}
-	// document.key：属主 policy+路径+mtime 规范化（跨视图同 key → DS 原生合并协作）
-	docKey := docKeyFor(keyPolicy, vp, e.ModTime)
+	fileToken := h.signFileToken(officeTarget{Kind: "local", PolicyID: policyID, UID: u.ID, Path: vp, Edit: editFlag})
+	// document.key：policy+路径+mtime 规范化 → DS 原生合并协作
+	docKey := docKeyFor(policyID, vp, e.ModTime)
 
 	cfgMap := h.buildOfficeConfig(h.publicBase(c), jwtSecret, docKey, e.Name, ext, officeDocType(ext), mode, fileToken,
 		map[string]interface{}{"id": fmt.Sprintf("u-%d", u.ID), "name": u.Nickname})
@@ -524,62 +468,32 @@ func (h *OfficeHandler) Status(c *gin.Context) {
 	if name == "" {
 		name = u.Nickname
 	}
-	shareID := parseUintQuery(c, "shareId")
 	policyID := parseUintQuery(c, "policyId")
-	if shareID == 0 && policyID == 0 {
+	if policyID == 0 {
 		dto.Fail(c, 400, "参数错误")
 		return
 	}
-	var docKey string
-	var modTime int64
-	if shareID != 0 {
-		if h.LoadShare == nil {
-			dto.Fail(c, 500, "共享服务不可用")
-			return
-		}
-		sh, dd, ok := h.LoadShare(c, shareID)
-		if !ok {
-			return
-		}
-		full, ok := userShareFull(sh, c.Query("rel"))
-		if !ok {
-			dto.Fail(c, 403, "路径越界")
-			return
-		}
-		e, err := dd.Stat(full)
-		if err != nil {
-			dto.Fail(c, 404, "文件不存在")
-			return
-		}
-		if e.IsDir {
-			dto.Fail(c, 400, "不能打开目录")
-			return
-		}
-		docKey = docKeyFor(sh.PolicyID, full, e.ModTime)
-		modTime = e.ModTime
-	} else {
-		v, err := fscore.Clean(c.Query("path"))
-		if err != nil {
-			dto.Fail(c, 400, "参数错误")
-			return
-		}
-		_, dd, err := h.Site.Fs.Resolve(u, x.group, policyID)
-		if err != nil {
-			dto.Fail(c, 403, err.Error())
-			return
-		}
-		e, err := dd.Stat(v)
-		if err != nil {
-			dto.Fail(c, 404, "文件不存在")
-			return
-		}
-		if e.IsDir {
-			dto.Fail(c, 400, "不能打开目录")
-			return
-		}
-		docKey = docKeyFor(policyID, v, e.ModTime)
-		modTime = e.ModTime
+	v, err := fscore.Clean(c.Query("path"))
+	if err != nil {
+		dto.Fail(c, 400, "参数错误")
+		return
 	}
+	_, dd, err := h.Site.Fs.Resolve(u, x.perm, policyID)
+	if err != nil {
+		dto.Fail(c, 403, err.Error())
+		return
+	}
+	e, err := dd.Stat(v)
+	if err != nil {
+		dto.Fail(c, 404, "文件不存在")
+		return
+	}
+	if e.IsDir {
+		dto.Fail(c, 400, "不能打开目录")
+		return
+	}
+	docKey := docKeyFor(policyID, v, e.ModTime)
+	modTime := e.ModTime
 	dto.OK(c, gin.H{"docKey": docKey, "modTime": modTime, "editors": touchEditSession(docKey, sess, name, mode)})
 }
 
@@ -641,9 +555,7 @@ func (h *OfficeHandler) StatusBatch(c *gin.Context) {
 	var items []struct {
 		Key      string `json:"key"`
 		PolicyID uint   `json:"policyId"`
-		ShareID  uint   `json:"shareId"`
 		Path     string `json:"path"`
-		Rel      string `json:"rel"`
 	}
 	if err := c.ShouldBindJSON(&items); err != nil || len(items) == 0 {
 		dto.Fail(c, 400, "参数错误")
@@ -657,30 +569,12 @@ func (h *OfficeHandler) StatusBatch(c *gin.Context) {
 		it := &items[i]
 		var docKey string
 		var modTime int64
-		if it.ShareID != 0 {
-			if h.LoadShare == nil {
-				continue
-			}
-			sh, dd, ok := h.LoadShare(c, it.ShareID)
-			if !ok {
-				continue
-			}
-			full, ok := userShareFull(sh, it.Rel)
-			if !ok {
-				continue
-			}
-			e, err := dd.Stat(full)
-			if err != nil || e.IsDir {
-				continue
-			}
-			docKey = docKeyFor(sh.PolicyID, full, e.ModTime)
-			modTime = e.ModTime
-		} else if it.PolicyID != 0 {
+		if it.PolicyID != 0 {
 			v, err := fscore.Clean(it.Path)
 			if err != nil {
 				continue
 			}
-			_, dd, err := h.Site.Fs.Resolve(u, x.group, it.PolicyID)
+			_, dd, err := h.Site.Fs.Resolve(u, x.perm, it.PolicyID)
 			if err != nil {
 				continue
 			}
@@ -707,14 +601,7 @@ func (h *OfficeHandler) File(c *gin.Context) {
 	}
 	var d fscore.Driver
 	var vp string
-	if t.Kind == "shared" {
-		_, _, dd, full, err := h.resolveShared(t)
-		if err != nil {
-			dto.FailHTTP(c, 404, err.Error())
-			return
-		}
-		d, vp = dd, full
-	} else if t.Kind == "pub" {
+	if t.Kind == "pub" {
 		_, _, dd, full, err := h.resolvePub(t)
 		if err != nil {
 			dto.FailHTTP(c, 404, err.Error())
@@ -769,14 +656,7 @@ func (h *OfficeHandler) Callback(c *gin.Context) {
 		return
 	}
 	if (cb.Status == 2 || cb.Status == 6) && cb.URL != "" {
-		if t.Kind == "shared" {
-			sh, p, d, full, err := h.resolveShared(t)
-			if err == nil {
-				h.saveCallbackBody(cb.URL, full, d, func(phys string) {
-					fscore.SaveVersion(p.ID, sh.OwnerID, full, phys)
-				}, fmt.Sprintf("share:%d %s", t.ShareID, full))
-			}
-		} else if t.Kind == "pub" {
+		if t.Kind == "pub" {
 			sh, p, d, full, err := h.resolvePub(t)
 			if err == nil {
 				h.saveCallbackBody(cb.URL, full, d, func(phys string) {

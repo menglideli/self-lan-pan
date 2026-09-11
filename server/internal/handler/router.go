@@ -16,12 +16,10 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 	auth := &AuthHandler{Secret: cfg.Secret}
 	// 登录/注册按来源 IP 限速，防密码暴破与批量注册
 	loginLimiter := middleware.NewIPRateLimiter(10, 5) // 10 次/分钟，突发 5
-	regLimiter := middleware.NewIPRateLimiter(5, 2)    // 5 次/小时，突发 2
 	// 刷新令牌续期：401 静默续期入口，独立限流防刷
 	refreshLimiter := middleware.NewIPRateLimiter(30, 10) // 30 次/分钟，突发 10
 	api.POST("/auth/login", middleware.RateLimit(loginLimiter), auth.Login)
-	api.POST("/auth/register", middleware.RateLimit(regLimiter), auth.Register)
-	// 单用户私有部署：不提供游客登录入口（原 POST /auth/guest 已移除）
+	// 单用户私有部署：不提供注册与游客登录入口（原 /auth/register、/auth/guest 已移除）
 	api.POST("/auth/refresh", middleware.RateLimit(refreshLimiter), auth.Refresh)
 
 	// 公开分享（受「公开分享」功能门控）
@@ -51,8 +49,8 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		middleware.RateLimit(officePubLimiter),
 		officePub.StatusShare)
 
-	// 需登录（GuestReadOnly：游客共享账号只读兜底，见 middleware/guest.go）
-	ug := api.Group("", middleware.Auth(cfg.Secret), middleware.GuestReadOnly())
+	// 需登录
+	ug := api.Group("", middleware.Auth(cfg.Secret))
 	{
 		ug.GET("/auth/me", auth.Me)
 		ug.PUT("/users/me", auth.UpdateMe)
@@ -144,41 +142,26 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		ug.POST("/notify/read", middleware.AppGate("notify"), notify.Read)
 		ug.POST("/notify/clear", middleware.AppGate("notify"), notify.Clear)
 
-		// 站内用户共享（受「内部共享」功能门控）
-		ush := &UserShareHandler{Site: site}
-		office.LoadShare = ush.loadShareByID // Office 编辑器支持共享盘文件（Config 需共享可见性校验）
-		ug.GET("/users", ush.Users)
-		ug.GET("/groups", ush.Groups)
-		ug.POST("/usershares", middleware.AppGate("usershare"), ush.Create)
-		ug.GET("/usershares", middleware.AppGate("usershare"), ush.Mine)
-		ug.DELETE("/usershares/:id", middleware.AppGate("usershare"), ush.Cancel)
-		ug.GET("/usershares/with-me", middleware.AppGate("usershare"), ush.WithMe)
-		ug.GET("/shared/:id/info", middleware.AppGate("usershare"), ush.Info)
-		ug.GET("/shared/:id/list", middleware.AppGate("usershare"), ush.List)
-		ug.GET("/shared/:id/raw", middleware.AppGate("usershare"), ush.Raw)
-		ug.GET("/shared/:id/download", middleware.AppGate("usershare"), ush.Download)
-		ug.POST("/shared/:id/mkdir", middleware.AppGate("usershare"), ush.Mkdir)
-		ug.POST("/shared/:id/upload", middleware.AppGate("usershare"), ush.Upload)
-		ug.POST("/shared/:id/delete", middleware.AppGate("usershare"), ush.Delete)
+		// 站内用户共享（usershare）已删除：单用户私有部署没有"他人"可共享
 
 		// 系统功能清单（应用中心数据源）
 		ug.GET("/apps", site.AppList)
 
-			// 终端：本地真实 shell（PTY/ConPTY）/ 远程 SSH 终端 + SFTP 文件管理。
-			// 每个端点都挂「终端」功能门控（无门控端点 = 绕过功能开关的 shell 入口，已修复）；
-			// 默认仅管理员可用（默认用户组 AppPerms 禁用 terminal，应用清单默认关闭）
-			th := NewTerminalHandler(cfg.Secret)
-			ug.GET("/terminal/ws", middleware.AppGate("terminal"), th.WebSocket)
-			ug.GET("/terminal/platform", middleware.AppGate("terminal"), th.Platform)
-			ug.POST("/terminal/conns", middleware.AppGate("terminal"), th.ConnSave)
-			ug.GET("/terminal/conns", middleware.AppGate("terminal"), th.ConnList)
-			ug.PUT("/terminal/conns/:id", middleware.AppGate("terminal"), th.ConnUpdate)
-			ug.DELETE("/terminal/conns/:id", middleware.AppGate("terminal"), th.ConnDelete)
-			ug.POST("/terminal/conns/:id/test", middleware.AppGate("terminal"), th.ConnTest)
-			ug.GET("/terminal/fs/list", middleware.AppGate("terminal"), th.FSList)
-			ug.POST("/terminal/fs/op", middleware.AppGate("terminal"), th.FSOps)
-			ug.GET("/terminal/fs/download", middleware.AppGate("terminal"), th.FSDownload)
-			ug.POST("/terminal/fs/upload", middleware.AppGate("terminal"), th.FSUpload)
+		// 终端：本地真实 shell（PTY/ConPTY）/ 远程 SSH 终端 + SFTP 文件管理。
+		// 每个端点都挂「终端」功能门控（无门控端点 = 绕过功能开关的 shell 入口，已修复）；
+		// 默认仅管理员可用（默认用户组 AppPerms 禁用 terminal，应用清单默认关闭）
+		th := NewTerminalHandler(cfg.Secret)
+		ug.GET("/terminal/ws", middleware.AppGate("terminal"), th.WebSocket)
+		ug.GET("/terminal/platform", middleware.AppGate("terminal"), th.Platform)
+		ug.POST("/terminal/conns", middleware.AppGate("terminal"), th.ConnSave)
+		ug.GET("/terminal/conns", middleware.AppGate("terminal"), th.ConnList)
+		ug.PUT("/terminal/conns/:id", middleware.AppGate("terminal"), th.ConnUpdate)
+		ug.DELETE("/terminal/conns/:id", middleware.AppGate("terminal"), th.ConnDelete)
+		ug.POST("/terminal/conns/:id/test", middleware.AppGate("terminal"), th.ConnTest)
+		ug.GET("/terminal/fs/list", middleware.AppGate("terminal"), th.FSList)
+		ug.POST("/terminal/fs/op", middleware.AppGate("terminal"), th.FSOps)
+		ug.GET("/terminal/fs/download", middleware.AppGate("terminal"), th.FSDownload)
+		ug.POST("/terminal/fs/upload", middleware.AppGate("terminal"), th.FSUpload)
 	}
 
 	// 内置浏览器代理：iframe 子资源请求没有 Authorization 头，故独立鉴权——
@@ -199,7 +182,7 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 
 	// 直链提取：签发需登录，访问免登录
 	dlh := &DLHandler{Site: site}
-	ug2 := api.Group("", middleware.Auth(cfg.Secret), middleware.GuestReadOnly())
+	ug2 := api.Group("", middleware.Auth(cfg.Secret))
 	ug2.GET("/fs/dlink", dlh.Create)
 	api.GET("/dl", dlh.Serve)
 
@@ -212,17 +195,7 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		// 系统资源监控（受「系统监控」功能门控）
 		ag.GET("/system", middleware.AppGate("system_monitor"), ad.SystemInfo)
 
-		ag.GET("/users", ad.UserList)
-		ag.POST("/users", ad.UserCreate)
-		ag.PUT("/users/:id", ad.UserUpdate)
-		ag.PUT("/users/:id/password", ad.UserResetPassword)
-		ag.DELETE("/users/:id", ad.UserDelete)
-
-		ag.GET("/groups", ad.GroupList)
-		ag.POST("/groups", ad.GroupSave)
-		ag.PUT("/groups/:id", ad.GroupSave)
-		ag.DELETE("/groups/:id", ad.GroupDelete)
-
+		// 单用户私有部署：用户管理与用户组管理端点已移除（只有管理员一个账号）
 		ag.GET("/policies", ad.PolicyList)
 		ag.POST("/policies", ad.PolicyCreate)
 		ag.PUT("/policies/:id", ad.PolicyUpdate)

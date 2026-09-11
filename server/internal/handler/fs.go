@@ -35,9 +35,9 @@ import (
 
 // SiteHandler 全局依赖
 type SiteHandler struct {
-	Cfg     *config.Config
-	Fs      *fscore.Service
-	ZipTmp  string
+	Cfg    *config.Config
+	Fs     *fscore.Service
+	ZipTmp string
 }
 
 func GetSiteSettings() map[string]string {
@@ -54,18 +54,9 @@ func GetSiteSettings() map[string]string {
 
 func (h *SiteHandler) PublicInfo(c *gin.Context) {
 	s := GetSiteSettings()
-	regOpen := s["register_open"] == "true"
-	invite := s["register_invite_code"] != ""
-	// 游客登录可用性：站点开关（默认开）且游客账号存在且未被禁用
-	guestLogin := s["guest_login"] != "false"
-	if guestLogin {
-		var gn int64
-		model.DB.Model(&model.User{}).Where("username = ? AND disabled = false", model.GuestUsername).Count(&gn)
-		guestLogin = gn > 0
-	}
-	// 站点主题：管理员全局设置，所有用户（游客/普通/管理员）访问都渲染该主题
+	// 站点主题：管理员全局设置。单用户私有部署只保留 Windows 12 概念风格一种。
 	theme := s["site_theme"]
-	if theme != "win12" && theme != "macos" && theme != "deepin" {
+	if theme != "win12" {
 		theme = "win12"
 	}
 	// 公开演示文档：站点设置 demo_share 填一个分享 token，登录页显示「体验在线文档」入口；
@@ -87,11 +78,10 @@ func (h *SiteHandler) PublicInfo(c *gin.Context) {
 		wpCatalog = []map[string]string{}
 	}
 	dto.OK(c, gin.H{
-		"siteName": s["site_name"], "registerOpen": regOpen, "needInviteCode": invite,
-		"officeConfigured": activeDS() != nil, // 多 DS 列表优先，回退单 DS 设置
+		"siteName":         s["site_name"],
+		"officeConfigured": activeDS() != nil,               // 多 DS 列表优先，回退单 DS 设置
 		"standaloneApps":   s["standalone_apps"] != "false", // 独立应用模式（#/app/:app）开关，默认开
 		"announcement":     s["announcement"],
-		"guestLogin":       guestLogin,
 		"theme":            theme,
 		"demoShare":        demoShare,
 		"wallpaperCatalog": wpCatalog,
@@ -105,7 +95,7 @@ func (h *SiteHandler) Policies(c *gin.Context) {
 	model.DB.Where("status != ?", "disabled").Order("letter").Find(&list)
 	out := make([]model.Policy, 0, len(list))
 	for _, p := range list {
-		if x.user.Role != "admin" && !x.group.CanUsePolicy(p.ID) {
+		if x.user.Role != "admin" && !x.perm.CanUsePolicy(p.ID) {
 			continue
 		}
 		if p.Type == "local" && (p.UsageAt == nil || time.Since(*p.UsageAt) > 10*time.Minute) {
@@ -129,12 +119,12 @@ func (h *SiteHandler) Policies(c *gin.Context) {
 
 // 用户上下文三元组
 type ctx3 struct {
-	user  *model.User
-	group *model.UserGroup
+	user *model.User
+	perm *model.Perms
 }
 
 func ctxOf(c *gin.Context) ctx3 {
-	return ctx3{user: middleware.CurrentUser(c), group: middleware.GroupOf(c)}
+	return ctx3{user: middleware.CurrentUser(c), perm: middleware.PermsOf(c)}
 }
 
 // userOfID 按 ID 加载用户（后台任务/分享等无请求上下文的场景定位数据属主）
@@ -146,14 +136,13 @@ func userOfID(id uint) *model.User {
 	return &u
 }
 
-// requireWritable 只读用户组（访客组）拦截对自己盘的写操作；管理员豁免。
-// 只读只约束自己的盘——他人显式授予的可写共享走 usershare 端点，不受此限
+// requireWritable 只读权限档案拦截对自己盘的写操作；管理员豁免。
 func requireWritable(c *gin.Context) bool {
 	x := ctxOf(c)
 	if x.user.Role == "admin" {
 		return true
 	}
-	if x.group.ReadOnly {
+	if x.perm.ReadOnly {
 		dto.Fail(c, 403, "该用户组为只读，仅可查看和下载")
 		return false
 	}
@@ -178,7 +167,7 @@ func (h *SiteHandler) resolveByID(policyID uint, c *gin.Context) (*model.Policy,
 		dto.Fail(c, 400, "缺少 policyId")
 		return nil, nil, false
 	}
-	p, d, err := h.Fs.Resolve(x.user, x.group, policyID)
+	p, d, err := h.Fs.Resolve(x.user, x.perm, policyID)
 	if err != nil {
 		dto.Fail(c, 403, err.Error())
 		return nil, nil, false
@@ -385,8 +374,8 @@ func entryBytes(d fscore.Driver, vp string) (int64, error) {
 }
 
 // effectiveQuotaBytes 用户生效配额（字节, 是否受限）
-// 优先级：用户个人覆盖（User.QuotaMB，<0=随组 / 0=不限量 / >0=专属上限）> 用户组配额
-func effectiveQuotaBytes(u *model.User, g *model.UserGroup) (int64, bool) {
+// 优先级：用户个人覆盖（User.QuotaMB，<0=随权限档案 / 0=不限量 / >0=专属上限）> 权限档案配额
+func effectiveQuotaBytes(u *model.User, g *model.Perms) (int64, bool) {
 	if u != nil && u.QuotaMB >= 0 {
 		if u.QuotaMB == 0 {
 			return 0, false
@@ -408,7 +397,7 @@ func checkQuota(c *gin.Context, x ctx3, add int64) bool {
 	if err := model.DB.First(&u, x.user.ID).Error; err != nil {
 		return true
 	}
-	limit, limited := effectiveQuotaBytes(&u, x.group)
+	limit, limited := effectiveQuotaBytes(&u, x.perm)
 	if !limited {
 		return true
 	}
@@ -438,11 +427,11 @@ func commitQuotaUpload(c *gin.Context, x ctx3, delta int64) bool {
 		return true
 	}
 	var u model.User
-	if model.DB.Select("id", "quota_mb", "group_id", "used_bytes").First(&u, x.user.ID).Error != nil {
+	if model.DB.Select("id", "quota_mb", "used_bytes").First(&u, x.user.ID).Error != nil {
 		addQuota(x.user.ID, delta)
 		return true
 	}
-	limit, limited := effectiveQuotaBytes(&u, x.group)
+	limit, limited := effectiveQuotaBytes(&u, x.perm)
 	if !limited {
 		addQuota(x.user.ID, delta)
 		return true
@@ -932,7 +921,7 @@ func (h *SiteHandler) GlobalSearch(c *gin.Context) {
 	model.DB.Where("status != ?", "disabled").Order("letter").Find(&list)
 	out := make([]gin.H, 0, 32)
 	for _, p := range list {
-		if x.user.Role != "admin" && !x.group.CanUsePolicy(p.ID) {
+		if x.user.Role != "admin" && !x.perm.CanUsePolicy(p.ID) {
 			continue
 		}
 		d, err := h.Fs.DriverFor(&p, x.user)
@@ -1046,7 +1035,7 @@ func (h *SiteHandler) Raw(c *gin.Context) {
 	c.Header("Content-Disposition", fmt.Sprintf(`%s; filename*=UTF-8''%s`, dispositionOf(name), urlEscape(name)))
 	// no-cache 允许 304 协商缓存，但文件被在线编辑覆盖后必须重新拉取最新内容
 	c.Header("Cache-Control", "no-cache")
-	rc = wrapThrottle(rc, x.group.DownloadSpeedKB)
+	rc = wrapThrottle(rc, x.perm.DownloadSpeedKB)
 	http.ServeContent(c.Writer, c.Request, name, modTimeOf(rc), rc)
 }
 
@@ -1296,7 +1285,7 @@ func parseFlacPicture(body []byte) (string, []byte) {
 		return "", nil
 	}
 	mime := string(body[8 : 8+mimeLen])
-	p := 8 + mimeLen + be32(8 + mimeLen) + 16 // 跳过描述 + 宽/高/位深/色数
+	p := 8 + mimeLen + be32(8+mimeLen) + 16 // 跳过描述 + 宽/高/位深/色数
 	if p > len(body) {
 		return "", nil
 	}
@@ -1395,7 +1384,7 @@ func (h *SiteHandler) Download(c *gin.Context) {
 			}
 			defer rc.Close()
 			c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename*=UTF-8''%s`, urlEscape(e.Name)))
-			rc = wrapThrottle(rc, ctxOf(c).group.DownloadSpeedKB)
+			rc = wrapThrottle(rc, ctxOf(c).perm.DownloadSpeedKB)
 			http.ServeContent(c.Writer, c.Request, e.Name, time.UnixMilli(e.ModTime), rc)
 			return
 		}
@@ -1439,7 +1428,7 @@ func (h *SiteHandler) Archive(c *gin.Context) {
 		return
 	}
 	x := ctxOf(c)
-	if !x.group.AllowArchive {
+	if !x.perm.AllowArchive {
 		dto.Fail(c, 403, "当前用户组不允许压缩/解压")
 		return
 	}
@@ -1549,8 +1538,8 @@ func (h *SiteHandler) RecyclePurge(c *gin.Context) {
 	}
 	x := ctxOf(c)
 	var in struct {
-		IDs   []uint   `json:"ids"`
-		All   bool     `json:"all"`
+		IDs []uint `json:"ids"`
+		All bool   `json:"all"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		dto.Fail(c, 400, "参数错误")
@@ -1647,9 +1636,9 @@ func (h *SiteHandler) FileVersionRestore(c *gin.Context) {
 	}
 	x := ctxOf(c)
 	var in struct {
-		PolicyID uint `json:"policyId"`
+		PolicyID uint   `json:"policyId"`
 		Path     string `json:"path"`
-		Version  int  `json:"version" binding:"required"`
+		Version  int    `json:"version" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil || in.Path == "" {
 		dto.Fail(c, 400, "参数错误")
@@ -1756,7 +1745,7 @@ func (h *SiteHandler) FileVersionDownload(c *gin.Context) {
 	defer f.Close()
 	name := baseOf(in.Path)
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename*=UTF-8''%s`, urlEscape(name)))
-	rc := wrapThrottle(f, x.group.DownloadSpeedKB)
+	rc := wrapThrottle(f, x.perm.DownloadSpeedKB)
 	http.ServeContent(c.Writer, c.Request, name, ver.CreatedAt, rc)
 }
 

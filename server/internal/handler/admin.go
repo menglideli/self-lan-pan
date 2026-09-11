@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -37,253 +36,13 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 	})
 }
 
-// ---- 用户管理 ----
-
-// userOut 用户管理输出：appPerms 解析为对象便于前端直接编辑
-type userOut struct {
-	model.User
-	AppPerms map[string]bool `json:"appPerms"`
-}
-
-func (h *AdminHandler) UserList(c *gin.Context) {
-	var in dto.PageIn
-	_ = c.ShouldBindQuery(&in)
-	offset, limit := in.Normalize()
-	q := model.DB.Model(&model.User{})
-	if in.Keyword != "" {
-		q = q.Where("username LIKE ? OR nickname LIKE ?", "%"+in.Keyword+"%", "%"+in.Keyword+"%")
-	}
-	var total int64
-	q.Count(&total)
-	var items []model.User
-	q.Order("id").Offset(offset).Limit(limit).Find(&items)
-	out := make([]userOut, 0, len(items))
-	for _, u := range items {
-		out = append(out, userOut{User: u, AppPerms: model.ParseAppPerms(u.AppPerms)})
-	}
-	dto.OK(c, dto.PageOut{Total: total, Items: out})
-}
-
-func (h *AdminHandler) UserCreate(c *gin.Context) {
-	var in struct {
-		Username string `json:"username" binding:"required,min=2,max=32"`
-		Password string `json:"password" binding:"required,min=6,max=64"`
-		Nickname string `json:"nickname"`
-		Role     string `json:"role"`
-		GroupID  uint   `json:"groupId"`
-		QuotaMB  int64  `json:"quotaMB"` // <0=随组（默认） 0=不限量 >0=专属上限(MB)
-	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		dto.Fail(c, 400, "参数错误")
-		return
-	}
-	var n int64
-	model.DB.Model(&model.User{}).Where("username = ?", in.Username).Count(&n)
-	if n > 0 {
-		dto.Fail(c, 400, "用户名已存在")
-		return
-	}
-	if in.Role != "admin" && in.Role != "user" {
-		in.Role = "user"
-	}
-	if in.GroupID == 0 {
-		var g model.UserGroup
-		model.DB.Where("is_default = ?", true).First(&g)
-		in.GroupID = g.ID
-	}
-	quotaMB := normalizeQuotaMB(in.QuotaMB)
-	u := model.User{Username: in.Username, PasswordHash: hashPassword(in.Password),
-		Nickname: orDefault(in.Nickname, in.Username), Role: in.Role, GroupID: in.GroupID, QuotaMB: quotaMB}
-	if err := model.DB.Create(&u).Error; err != nil {
-		dto.Fail(c, 500, "创建失败")
-		return
-	}
-	middleware.Audit(c, "admin", "创建用户 "+in.Username)
-	dto.OK(c, userOut{User: u, AppPerms: model.ParseAppPerms(u.AppPerms)})
-}
-
-func (h *AdminHandler) UserUpdate(c *gin.Context) {
-	var in struct {
-		Nickname *string         `json:"nickname"`
-		Role     *string         `json:"role"`
-		GroupID  *uint           `json:"groupId"`
-		Disabled *bool           `json:"disabled"`
-		QuotaMB  *int64          `json:"quotaMB"`
-		AppPerms *map[string]bool `json:"appPerms"` // 个人权限覆盖；传 {} = 全部恢复跟随用户组
-	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		dto.Fail(c, 400, "参数错误")
-		return
-	}
-	var u model.User
-	if err := model.DB.First(&u, c.Param("id")).Error; err != nil {
-		dto.Fail(c, 404, "用户不存在")
-		return
-	}
-	up := map[string]interface{}{}
-	if in.Nickname != nil {
-		up["nickname"] = *in.Nickname
-	}
-	if in.Role != nil && (*in.Role == "admin" || *in.Role == "user") {
-		up["role"] = *in.Role
-	}
-	if in.GroupID != nil {
-		up["group_id"] = *in.GroupID
-	}
-	if in.Disabled != nil {
-		up["disabled"] = *in.Disabled
-	}
-	if in.QuotaMB != nil {
-		up["quota_mb"] = normalizeQuotaMB(*in.QuotaMB)
-	}
-	if in.AppPerms != nil {
-		up["app_perms"] = model.AppPermsJSON(*in.AppPerms)
-	}
-	if len(up) > 0 {
-		model.DB.Model(&u).Updates(up)
-		model.DB.First(&u, c.Param("id"))
-	}
-	middleware.Audit(c, "admin", "更新用户 "+u.Username)
-	dto.OK(c, userOut{User: u, AppPerms: model.ParseAppPerms(u.AppPerms)})
-}
-
-func (h *AdminHandler) UserResetPassword(c *gin.Context) {
-	var in struct {
-		Password string `json:"password" binding:"required,min=6,max=64"`
-	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		dto.Fail(c, 400, "参数错误")
-		return
-	}
-	var u model.User
-	if err := model.DB.First(&u, c.Param("id")).Error; err != nil {
-		dto.Fail(c, 404, "用户不存在")
-		return
-	}
-	// 令牌版本自增：重置密码后该用户全部旧 JWT 立即失效
-	model.DB.Model(&u).Updates(map[string]interface{}{
-		"password_hash": hashPassword(in.Password),
-		"token_ver":     u.TokenVer + 1,
-	})
-	middleware.Audit(c, "admin", "重置用户密码 "+u.Username)
-	dto.OK(c, nil)
-}
-
-func (h *AdminHandler) UserDelete(c *gin.Context) {
-	me := middleware.CurrentUser(c)
-	id, _ := strconv.Atoi(c.Param("id"))
-	if uint(id) == me.ID {
-		dto.Fail(c, 400, "不能删除自己")
-		return
-	}
-	var u model.User
-	if err := model.DB.First(&u, id).Error; err != nil {
-		dto.Fail(c, 404, "用户不存在")
-		return
-	}
-	model.DB.Delete(&u)
-	middleware.Audit(c, "admin", "删除用户 "+u.Username)
-	dto.OK(c, nil)
-}
-
-// ---- 用户组 ----
-
-// groupOut 用户组管理输出：appPerms 解析为对象便于前端直接编辑
-type groupOut struct {
-	model.UserGroup
-	AppPerms map[string]bool `json:"appPerms"`
-}
-
-func (h *AdminHandler) GroupList(c *gin.Context) {
-	var items []model.UserGroup
-	model.DB.Order("id").Find(&items)
-	out := make([]groupOut, 0, len(items))
-	for _, g := range items {
-		out = append(out, groupOut{UserGroup: g, AppPerms: model.ParseAppPerms(g.AppPerms)})
-	}
-	dto.OK(c, out)
-}
-
-func (h *AdminHandler) GroupSave(c *gin.Context) {
-	var in struct {
-		ID                   uint             `json:"id"`
-		Name                 string           `json:"name" binding:"required"`
-		QuotaMB              int64            `json:"quotaMB"`
-		AllowShare           bool             `json:"allowShare"`
-		AllowWebdav          bool             `json:"allowWebdav"`
-		AllowArchive         bool             `json:"allowArchive"`
-		AllowOffline         bool             `json:"allowOffline"`
-		ShareAllowDownload   bool             `json:"shareAllowDownload"`
-		ReadOnly             bool             `json:"readOnly"`
-		DownloadSpeedKB      int64            `json:"downloadSpeedKB"`
-		RecycleRetentionDays int              `json:"recycleRetentionDays"`
-		KeepVersions         int              `json:"keepVersions"`
-		VersionRetentionDays int              `json:"versionRetentionDays"`
-		AllowedPolicyIDs     string           `json:"allowedPolicyIds"`
-		AppPerms             map[string]bool  `json:"appPerms"` // 组级应用权限；缺省键 = 允许
-		IsDefault            bool             `json:"isDefault"`
-		Remark               string           `json:"remark"`
-	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		dto.Fail(c, 400, "参数错误")
-		return
-	}
-	perms := model.AppPermsJSON(in.AppPerms)
-	if in.ID == 0 {
-		g := model.UserGroup{Name: in.Name, QuotaMB: in.QuotaMB, AllowShare: in.AllowShare,
-			AllowWebdav: in.AllowWebdav, AllowArchive: in.AllowArchive, AllowOffline: in.AllowOffline,
-			ShareAllowDownload: in.ShareAllowDownload, ReadOnly: in.ReadOnly, DownloadSpeedKB: in.DownloadSpeedKB,
-			RecycleRetentionDays: in.RecycleRetentionDays, KeepVersions: in.KeepVersions,
-			VersionRetentionDays: in.VersionRetentionDays, AllowedPolicyIDs: in.AllowedPolicyIDs,
-			AppPerms: perms, IsDefault: in.IsDefault, Remark: in.Remark}
-		if err := model.DB.Create(&g).Error; err != nil {
-			dto.Fail(c, 400, "名称重复或参数错误")
-			return
-		}
-		middleware.Audit(c, "admin", "保存用户组 "+in.Name)
-		dto.OK(c, groupOut{UserGroup: g, AppPerms: model.ParseAppPerms(perms)})
-		return
-	}
-	if err := model.DB.Model(&model.UserGroup{}).Where("id = ?", in.ID).Updates(map[string]interface{}{
-		"name": in.Name, "quota_mb": in.QuotaMB, "allow_share": in.AllowShare,
-		"allow_webdav": in.AllowWebdav, "allow_archive": in.AllowArchive, "allow_offline": in.AllowOffline,
-		"share_allow_download": in.ShareAllowDownload, "read_only": in.ReadOnly, "download_speed_kb": in.DownloadSpeedKB,
-		"recycle_retention_days": in.RecycleRetentionDays,
-		"keep_versions": in.KeepVersions, "version_retention_days": in.VersionRetentionDays,
-		"allowed_policy_ids": in.AllowedPolicyIDs, "app_perms": perms,
-		"is_default": in.IsDefault, "remark": in.Remark,
-	}).Error; err != nil {
-		dto.Fail(c, 400, "保存失败")
-		return
-	}
-	model.InvalidateAppPermCache(in.ID)
-	middleware.Audit(c, "admin", "保存用户组 "+in.Name)
-	var g model.UserGroup
-	model.DB.First(&g, in.ID)
-	dto.OK(c, groupOut{UserGroup: g, AppPerms: model.ParseAppPerms(g.AppPerms)})
-}
-
-func (h *AdminHandler) GroupDelete(c *gin.Context) {
-	var n int64
-	model.DB.Model(&model.User{}).Where("group_id = ?", c.Param("id")).Count(&n)
-	if n > 0 {
-		dto.Fail(c, 400, "仍有用户属于该组")
-		return
-	}
-	var gid uint
-	_, _ = fmt.Sscanf(c.Param("id"), "%d", &gid)
-	model.DB.Delete(&model.UserGroup{}, c.Param("id"))
-	model.InvalidateAppPermCache(gid)
-	dto.OK(c, nil)
-}
-
 // ---- 存储策略 ----
 
 type policyIn struct {
-	Name     string `json:"name" binding:"required"`
-	Letter   string `json:"letter" binding:"required"`
-	Type     string `json:"type" binding:"required"`
-	RootPath string `json:"rootPath"`
+	Name     string            `json:"name" binding:"required"`
+	Letter   string            `json:"letter" binding:"required"`
+	Type     string            `json:"type" binding:"required"`
+	RootPath string            `json:"rootPath"`
 	Options  map[string]string `json:"options"`
 }
 
@@ -589,7 +348,7 @@ func (h *AdminHandler) ShareDelete(c *gin.Context) {
 	if sh.Token != "" {
 		_ = os.RemoveAll(filepath.Join(h.Site.Cfg.Sub("sharedata"), filepath.Base(sh.Token)))
 	}
-	middleware.Audit(c, "admin", "管理员取消分享 #" + c.Param("id"))
+	middleware.Audit(c, "admin", "管理员取消分享 #"+c.Param("id"))
 	dto.OK(c, nil)
 }
 
@@ -617,4 +376,3 @@ func marshalOpts(m map[string]string) string {
 	b, _ := jsonMarshal(m)
 	return string(b)
 }
-

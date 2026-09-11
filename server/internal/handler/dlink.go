@@ -70,7 +70,7 @@ func (h *DLHandler) Create(c *gin.Context) {
 		dto.Fail(c, 400, "参数错误")
 		return
 	}
-	_, d, err := h.Site.Fs.Resolve(u, x.group, policyID)
+	_, d, err := h.Site.Fs.Resolve(u, x.perm, policyID)
 	if err != nil {
 		dto.Fail(c, 403, err.Error())
 		return

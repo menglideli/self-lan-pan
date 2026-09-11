@@ -94,18 +94,6 @@ export const appsApi = {
   list: () => get<SysApp[]>('/apps')
 }
 
-// 网络测速（内置应用；流式接口走 ?t= 令牌直连，避免 Bearer 头）
-export const speedtestApi = {
-  pingUrl: () => `/api/speedtest/ping?t=${getToken()}`,
-  downloadUrl: (size: number) => `/api/speedtest/download?size=${size}&t=${getToken()}`,
-  uploadUrl: () => `/api/speedtest/upload?t=${getToken()}`
-}
-
-// 内置浏览器：签发票据（iframe 子资源凭 ?pt= 走代理，避免真实 JWT 进资源 URL）
-export const browserApi = {
-  session: () => get<{ pt: string }>('/browser/session')
-}
-
 // 用户设置 KV（播放列表 / 观看进度 / 已安装应用等 JSON）
 export const settingsApi = {
   get: (keys?: string[]) => get<Record<string, string>>('/settings' + (keys && keys.length ? `?keys=${keys.join(',')}` : '')),

@@ -100,13 +100,6 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		ug.GET("/settings", site.UserSettingsGet)
 		ug.PUT("/settings", site.UserSettingsSet)
 
-		// 网络测速（内置应用，界面仿 LibreSpeed；download 随机数据 no-store，upload 丢弃）
-		// 受「网络测速」功能门控：游客（访客组）无权限，API 403 且桌面/应用中心入口隐藏
-		st := &SpeedTestHandler{}
-		ug.GET("/speedtest/ping", middleware.AppGate("speedtest"), st.Ping)
-		ug.GET("/speedtest/download", middleware.AppGate("speedtest"), st.Download)
-		ug.POST("/speedtest/upload", middleware.AppGate("speedtest"), st.Upload)
-
 		ug.GET("/shares", middleware.AppGate("share"), sh.Mine)
 		ug.POST("/shares", middleware.AppGate("share"), sh.Create)
 		ug.DELETE("/shares/:id", middleware.AppGate("share"), sh.Cancel)
@@ -147,29 +140,7 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		// 系统功能清单（应用中心数据源）
 		ug.GET("/apps", site.AppList)
 
-		// 终端：本地真实 shell（PTY/ConPTY）/ 远程 SSH 终端 + SFTP 文件管理。
-		// 每个端点都挂「终端」功能门控（无门控端点 = 绕过功能开关的 shell 入口，已修复）；
-		// 默认仅管理员可用（默认用户组 AppPerms 禁用 terminal，应用清单默认关闭）
-		th := NewTerminalHandler(cfg.Secret)
-		ug.GET("/terminal/ws", middleware.AppGate("terminal"), th.WebSocket)
-		ug.GET("/terminal/platform", middleware.AppGate("terminal"), th.Platform)
-		ug.POST("/terminal/conns", middleware.AppGate("terminal"), th.ConnSave)
-		ug.GET("/terminal/conns", middleware.AppGate("terminal"), th.ConnList)
-		ug.PUT("/terminal/conns/:id", middleware.AppGate("terminal"), th.ConnUpdate)
-		ug.DELETE("/terminal/conns/:id", middleware.AppGate("terminal"), th.ConnDelete)
-		ug.POST("/terminal/conns/:id/test", middleware.AppGate("terminal"), th.ConnTest)
-		ug.GET("/terminal/fs/list", middleware.AppGate("terminal"), th.FSList)
-		ug.POST("/terminal/fs/op", middleware.AppGate("terminal"), th.FSOps)
-		ug.GET("/terminal/fs/download", middleware.AppGate("terminal"), th.FSDownload)
-		ug.POST("/terminal/fs/upload", middleware.AppGate("terminal"), th.FSUpload)
 	}
-
-	// 内置浏览器代理：iframe 子资源请求没有 Authorization 头，故独立鉴权——
-	// 登录 JWT（头或 ?t=）与短时效代理票据 ?pt= 二者皆可（见 browser.go）
-	bh := &BrowserHandler{Secret: cfg.Secret}
-	bg := api.Group("", bh.auth, middleware.AppGate("browser"), middleware.RateLimit(middleware.NewIPRateLimiter(300, 100)))
-	bg.GET("/browser/session", bh.Session)
-	bg.GET("/browser/p/:b64", bh.Proxy)
 
 	// ONLYOFFICE 服务端回调（无 JWT，用签名 token 鉴权；受「在线 Office」功能门控）
 	api.GET("/office/file", middleware.AppGate("office"), (&OfficeHandler{Site: site}).File)

@@ -215,7 +215,7 @@
             <div class="ac-set-sep"></div>
             <div class="ac-set-title">登录</div>
             <div class="ac-set-row">
-              <div class="ac-set-lbl"><b>独立应用模式</b><span>允许通过 #/app/&lt;应用ID&gt; 链接直接全屏打开单个应用（如 #/app/calculator），未登录时显示极简登录；关闭后访问显示拦截页</span></div>
+              <div class="ac-set-lbl"><b>独立应用模式</b><span>允许通过 #/app/&lt;应用ID&gt; 链接直接全屏打开单个应用（如 #/app/explorer），未登录时显示极简登录；关闭后访问显示拦截页</span></div>
               <label class="ac-switch"><input type="checkbox" :checked="settings.standalone_apps !== 'false'" @change="settings.standalone_apps = ($event.target as HTMLInputElement).checked ? 'true' : 'false'" /><span class="ac-slider"></span></label>
             </div>
             <div class="ac-set-sep"></div>

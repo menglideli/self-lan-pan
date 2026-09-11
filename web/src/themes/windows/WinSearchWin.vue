@@ -36,14 +36,6 @@
             <small v-if="kw">设置</small>
           </div>
         </template>
-        <!-- 网页（交给内置浏览器搜索） -->
-        <template v-if="tab === '网页' && kw">
-          <div class="w12-search-sec">网页</div>
-          <div class="w12-search-item" @click="openWeb()">
-            <AppIcon name="browser" :size="25" />
-            <span class="nm">在浏览器中搜索“{{ kw }}”</span>
-          </div>
-        </template>
         <!-- 推荐（仅无关键词的全部页签，与 1:1 演示一致） -->
         <template v-if="!kw && tab === '全部'">
           <div class="w12-search-sec" style="line-height: 24px">推荐</div>
@@ -53,15 +45,11 @@
           <div class="w12-search-item" @click="openApp({ id: 'explorer', name: '文件资源管理器', icon: 'explorer' })">
             <AppIcon name="explorer" :size="25" /><span class="nm">文件资源管理器</span>
           </div>
-          <div class="w12-search-item" @click="openApp({ id: 'browser', name: '浏览器', icon: 'browser' })">
-            <AppIcon name="browser" :size="25" /><span class="nm">浏览器</span>
-          </div>
         </template>
         <div v-if="kw && isFileTab && searching" class="w12-search-empty">正在搜索...</div>
         <div v-else-if="kw && isFileTab && !searching && !shownFiles.length && !(tab === '全部' && appHits.length)" class="w12-search-empty">未找到相关结果</div>
         <div v-else-if="kw && tab === '应用' && !appHits.length" class="w12-search-empty">未找到相关应用</div>
         <div v-else-if="kw && tab === '设置' && !settingsHits.length" class="w12-search-empty">未找到相关设置</div>
-        <div v-else-if="tab === '网页' && !kw" class="w12-search-empty">输入关键词，用内置浏览器搜索网页</div>
       </div>
       <div class="w12-search-view" :class="{ on: !!sel }">
         <template v-if="sel && sel.kind === 'file'">
@@ -102,7 +90,7 @@ const session = useSession()
 
 const kw = ref('')
 const tab = ref('全部')
-const tabs = ['全部', '应用', '文档', '网页', '设置', '文件夹', '照片']
+const tabs = ['全部', '应用', '文档', '设置', '文件夹', '照片']
 const fileHits = ref<any[]>([])
 const appHits = ref<any[]>([])
 const searching = ref(false)
@@ -194,10 +182,6 @@ function openApp(a: any) {
 }
 function openSettings(area: any) {
   store.open('settings', { tab: area.id })
-  emit('close')
-}
-function openWeb() {
-  store.open('browser', { url: 'https://www.baidu.com/s?wd=' + encodeURIComponent(kw.value.trim()) })
   emit('close')
 }
 function openSel() {

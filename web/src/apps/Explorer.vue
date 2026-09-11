@@ -462,9 +462,8 @@ const store = useWindows()
 const session = useSession()
 const apps = useAppState()
 const router = useRouter()
-// 离线下载/终端等无权限功能：入口整体隐藏（不显示禁用态），与「无权限功能完全隐藏」原则一致
+// 离线下载等无权限功能：入口整体隐藏（不显示禁用态），与「无权限功能完全隐藏」原则一致
 const canOffline = computed(() => canUseOffline())
-const canTerminal = computed(() => apps.isAvailable('terminal'))
 const clip = useClipboard()
 const transfer = useTransfer()
 const ctx = useContextMenu()
@@ -1587,12 +1586,6 @@ function onBlankCtx(e: MouseEvent) {
     ...(canOffline.value ? [
       { label: '离线下载到此', icon: 'cloud', onClick: offlineDlg }
     ] : []),
-    ...(canTerminal.value ? [
-      {
-        label: '在终端中打开', icon: 'terminal',
-        onClick: () => store.open('terminal', { policyId: currentPolicy.value!.id, path: path.value }, { title: '终端' })
-      }
-    ] : []),
     { separator: true },
     { label: '属性', icon: 'info', onClick: () => showProps(path.value) }
   )
@@ -1694,13 +1687,7 @@ function pasteInto(f: FileItem) {
 }
 function onPolicyCtx(p: Policy, e: MouseEvent) {
   const menu: any[] = [
-    { label: '打开', icon: 'fwd', onClick: () => openPolicy(p) },
-    ...(canTerminal.value ? [
-      {
-        label: '在终端中打开', icon: 'terminal',
-        onClick: () => store.open('terminal', { policyId: p.id, path: '/' }, { title: '终端' })
-      }
-    ] : [])
+    { label: '打开', icon: 'fwd', onClick: () => openPolicy(p) }
   ]
   if (session.user?.role === 'admin') {
     menu.push({ separator: true })

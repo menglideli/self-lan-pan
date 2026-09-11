@@ -39,9 +39,9 @@ const notify = useNotify()
 const transfer = useTransfer()
 
 const G = (p: string) => `<svg viewBox="0 0 24 24" fill="none"><g stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</g></svg>`
-// 六枚磁贴全部是真实功能：测速/通知/传输/护眼/深色/锁屏
+// 六枚磁贴全部是真实功能：设置/通知/传输/护眼/深色/锁屏
 const tiles = [
-  { id: 'wifi', name: '网络测速', svg: G('<path d="M4 9.5a12 12 0 0 1 16 0"/><path d="M7 13a8 8 0 0 1 10 0"/><path d="M10 16.4a4 4 0 0 1 4 0"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/>') },
+  { id: 'settings', name: '设置', svg: G('<circle cx="12" cy="12" r="3.2"/><path d="M12 4.6v2M12 17.4v2M4.6 12h2M17.4 12h2M7.1 7.1l1.4 1.4M15.5 15.5l1.4 1.4M16.9 7.1l-1.4 1.4M8.5 15.5l-1.4 1.4"/>') },
   { id: 'notify', name: '通知中心', svg: G('<path d="M6 9.5a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 19.5a2.2 2.2 0 0 0 4 0"/>') },
   { id: 'transfer', name: '传输任务', svg: G('<path d="M12 4v9.5"/><path d="M8.2 10l3.8 3.8 3.8-3.8"/><path d="M5 19.5h14"/>') },
   { id: 'eye', name: '护眼模式', svg: G('<path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>') },
@@ -66,7 +66,7 @@ function activeOf(id: string): boolean {
 }
 function act(id: string) {
   switch (id) {
-    case 'wifi': wins.open('speedtest'); emit('close'); break
+    case 'settings': wins.open('settings'); emit('close'); break
     case 'notify': notify.openPanel(); emit('close'); break
     case 'transfer': transfer.panel(); emit('close'); break
     case 'eye':

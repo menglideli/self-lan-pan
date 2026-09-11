@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { authApi, siteApi, adminApi, type User, type UserGroup } from '../api/modules'
+import { authApi, siteApi, adminApi, type User, type Perms } from '../api/modules'
 import { clearToken } from '../api/http'
 import { applyWallpaperEffect } from '../assets/wallpapers'
 import type { ThemeId } from '../themes/types'
@@ -20,10 +20,9 @@ function validTheme(v: any): v is ThemeId {
 export const useSession = defineStore('session', {
   state: () => ({
     user: null as User | null,
-    group: null as UserGroup | null,
-    // 游客共享账号：系统托管身份（全体访客共用），无账号自管理入口（后端 GuestReadOnly 兜底）
-    isGuest: false,
-    site: { siteName: 'CloudPan', registerOpen: false, needInviteCode: false, officeConfigured: false, announcement: '', guestLogin: false, theme: 'win12', demoShare: '', wallpaperCatalog: [] as { name: string; url: string }[] },
+    // 单用户私有部署：权限档案由后端写死（管理员全开），前端只读
+    perms: null as Perms | null,
+    site: { siteName: 'CloudPan', officeConfigured: false, announcement: '', theme: 'win12', demoShare: '', standaloneApps: true, wallpaperCatalog: [] as { name: string; url: string }[] },
     wallpaper: localStorage.getItem('cp_wallpaper') || 'win12',
     dark: localStorage.getItem('cp_dark') === '1',
     // 系统主题由站点设置全局决定（管理员设置，所有用户看到同一主题），不再存本机偏好
@@ -46,8 +45,7 @@ export const useSession = defineStore('session', {
     async loadMe() {
       const d = await authApi.me()
       this.user = d.user
-      this.group = d.group
-      this.isGuest = !!d.isGuest
+      this.perms = d.perms
       return d
     },
     setWallpaper(w: string) {

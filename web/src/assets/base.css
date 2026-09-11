@@ -381,14 +381,6 @@ select.input { cursor: pointer; }
 .wp-ph-mist     { background: url('/wallpapers/win12/mist.jpg') center / cover no-repeat; }
 .wp-ph-valley   { background: url('/wallpapers/win12/valley.jpg') center / cover no-repeat; }
 .wp-ph-coast    { background: url('/wallpapers/win12/coast.jpg') center / cover no-repeat; }
-.wp-ph-yosemite { background: url('/wallpapers/macos/yosemite.jpg') center / cover no-repeat; }
-.wp-ph-field    { background: url('/wallpapers/macos/field.jpg') center / cover no-repeat; }
-.wp-ph-forest   { background: url('/wallpapers/macos/forest.jpg') center / cover no-repeat; }
-.wp-ph-starry   { background: url('/wallpapers/macos/starry.jpg') center / cover no-repeat; }
-.wp-ph-lake     { background: url('/wallpapers/deepin/lake.jpg') center / cover no-repeat; }
-.wp-ph-sea      { background: url('/wallpapers/deepin/sea.jpg') center / cover no-repeat; }
-.wp-ph-peak     { background: url('/wallpapers/deepin/peak.jpg') center / cover no-repeat; }
-.wp-ph-wave     { background: url('/wallpapers/deepin/wave.jpg') center / cover no-repeat; }
 
 /* 外部 URL 壁纸（壁纸中心：管理员目录/我的壁纸）：背景图走 CSS 变量，由 applyWallpaperEffect 注入 */
 .wp-ext {

@@ -112,61 +112,7 @@
           </div>
         </template>
 
-        <!-- 用户管理 -->
-        <template v-else-if="tab === 'users'">
-          <div class="ac-head">
-            <h2 class="ac-h2">用户管理</h2>
-            <button class="btn primary" @click="userForm = { ...emptyUser }; userShow = true"><AppIcon name="plus" :size="15" />新建用户</button>
-          </div>
-          <div class="ac-card" style="padding: 4px 0">
-            <table class="ac-table">
-              <thead><tr><th>用户名</th><th>昵称</th><th>角色</th><th>用户组</th><th>配额</th><th>用量</th><th>状态</th><th style="width: 380px">操作</th></tr></thead>
-              <tbody>
-                <tr v-for="u in users" :key="u.id">
-                  <td class="ac-strong">{{ u.username }}</td>
-                  <td>{{ u.nickname }}</td>
-                  <td><span class="ac-tag" :class="{ admin: u.role === 'admin' }">{{ u.role === 'admin' ? '管理员' : '用户' }}</span></td>
-                  <td>{{ groupName(u.groupId) }}</td>
-                  <td>{{ userQuotaText(u) }}</td>
-                  <td>{{ fmt(u.usedBytes) }}</td>
-                  <td><span class="ac-dot" :class="{ off: u.disabled }"></span>{{ u.disabled ? '已禁用' : '正常' }}</td>
-                  <td>
-                    <button class="btn" style="padding: 4px 10px" @click="openQuota(u)">配额</button>
-                    <button class="btn" style="padding: 4px 10px" @click="openPerms(u)">权限</button>
-                    <button class="btn" style="padding: 4px 10px" @click="toggleUser(u)">{{ u.disabled ? '启用' : '禁用' }}</button>
-                    <button class="btn" style="padding: 4px 10px" @click="resetPwd(u)">重置密码</button>
-                    <button class="btn danger" style="padding: 4px 10px" @click="delUser(u)">删除</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </template>
-
-        <!-- 用户组 -->
-        <template v-else-if="tab === 'groups'">
-          <div class="ac-head">
-            <h2 class="ac-h2">用户组</h2>
-            <button class="btn primary" @click="editGroup = { ...emptyGroup }; groupShow = true"><AppIcon name="plus" :size="15" />新建用户组</button>
-          </div>
-          <div class="ac-cards" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))">
-            <div v-for="g in groups" :key="g.id" class="ac-card" style="padding: 16px 18px">
-              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px">
-                <AppIcon name="lock" :size="20" />
-                <div style="font-weight: 600; flex: 1">{{ g.name }}</div>
-                <span v-if="g.isDefault" class="ac-tag">默认</span>
-              </div>
-              <div class="ac-kv"><span>配额</span><b>{{ g.quotaMB > 0 ? g.quotaMB + ' MB' : '不限' }}</b></div>
-              <div class="ac-kv"><span>分享 / WebDAV / 压缩 / 离线</span><b>{{ yn(g.allowShare) }} {{ yn(g.allowWebdav) }} {{ yn(g.allowArchive) }} {{ yn(g.allowOffline) }}</b></div>
-              <div class="ac-kv"><span>分享可下载</span><b>{{ yn(g.shareAllowDownload) }}</b></div>
-              <div class="ac-kv"><span>版本保留</span><b>{{ g.keepVersions === -1 ? '不限' : (g.keepVersions || 10) + ' 个' }}{{ g.versionRetentionDays ? ' / ' + g.versionRetentionDays + ' 天' : ' / 永久' }}</b></div>
-              <div style="display: flex; gap: 8px; margin-top: 12px">
-                <button class="btn" style="flex: 1" @click="editGroup = JSON.parse(JSON.stringify(g)); groupShow = true">编辑</button>
-                <button class="btn danger" style="flex: 1" @click="delGroup(g)">删除</button>
-              </div>
-            </div>
-          </div>
-        </template>
+        <!-- 单用户私有部署：用户管理与用户组管理已整体移除（只有管理员一个账号） -->
 
         <!-- 存储策略 -->
         <template v-else-if="tab === 'policies'">
@@ -261,29 +207,13 @@
               <input class="input" v-model="settings.demo_share" style="width: 300px" placeholder="分享 token，如 abc123；留空 = 不显示入口" />
             </div>
             <div class="ac-set-row">
-              <div class="ac-set-lbl"><b>站点主题</b><span>全局生效：游客/普通用户/管理员访问都渲染该主题（非管理员无设置入口）</span></div>
-              <select class="input" v-model="settings.site_theme" style="width: 260px">
+              <div class="ac-set-lbl"><b>站点主题</b><span>单用户私有部署只保留 Windows 12 概念风格</span></div>
+              <select class="input" v-model="settings.site_theme" style="width: 260px" disabled>
                 <option value="win12">Windows 12 概念版</option>
-                <option value="macos">macOS（Sonoma）</option>
-                <option value="deepin">Deepin（DDE）</option>
               </select>
             </div>
             <div class="ac-set-sep"></div>
-            <div class="ac-set-title">注册</div>
-            <div class="ac-set-row">
-              <div class="ac-set-lbl"><b>开放注册</b><span>关闭后只有管理员能创建账号</span></div>
-              <label class="ac-switch"><input type="checkbox" :checked="settings.register_open === 'true'" @change="settings.register_open = ($event.target as HTMLInputElement).checked ? 'true' : 'false'" /><span class="ac-slider"></span></label>
-            </div>
-            <div class="ac-set-row">
-              <div class="ac-set-lbl"><b>邀请码</b><span>开启注册时可要求邀请码（留空则不需要）</span></div>
-              <input class="input" v-model="settings.register_invite_code" style="width: 260px" />
-            </div>
-            <div class="ac-set-sep"></div>
             <div class="ac-set-title">登录</div>
-            <div class="ac-set-row">
-              <div class="ac-set-lbl"><b>游客登录</b><span>登录页提供「游客登录」，以共享游客账号（访客组，只读）进入；关闭后登录页不显示该入口</span></div>
-              <label class="ac-switch"><input type="checkbox" :checked="settings.guest_login !== 'false'" @change="settings.guest_login = ($event.target as HTMLInputElement).checked ? 'true' : 'false'" /><span class="ac-slider"></span></label>
-            </div>
             <div class="ac-set-row">
               <div class="ac-set-lbl"><b>独立应用模式</b><span>允许通过 #/app/&lt;应用ID&gt; 链接直接全屏打开单个应用（如 #/app/calculator），未登录时显示极简登录；关闭后访问显示拦截页</span></div>
               <label class="ac-switch"><input type="checkbox" :checked="settings.standalone_apps !== 'false'" @change="settings.standalone_apps = ($event.target as HTMLInputElement).checked ? 'true' : 'false'" /><span class="ac-slider"></span></label>
@@ -526,129 +456,6 @@
       </div>
     </div>
 
-    <!-- 用户对话框 -->
-    <div class="dialog-mask" v-if="userShow" @click.self="userShow = false">
-      <div class="dialog">
-        <h3>新建用户</h3>
-        <div class="row"><label>用户名</label><input class="input" v-model="userForm.username" style="width: 100%" /></div>
-        <div class="row"><label>密码</label><input class="input" v-model="userForm.password" style="width: 100%" /></div>
-        <div class="row"><label>昵称</label><input class="input" v-model="userForm.nickname" style="width: 100%" /></div>
-        <div class="row">
-          <label>角色 / 用户组</label>
-          <div style="display: flex; gap: 8px">
-            <select class="input" v-model="userForm.role" style="flex: 1">
-              <option value="user">用户</option><option value="admin">管理员</option>
-            </select>
-            <select class="input" v-model.number="userForm.groupId" style="flex: 1">
-              <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
-            </select>
-          </div>
-        </div>
-        <div class="actions">
-          <button class="btn" @click="userShow = false">取消</button>
-          <button class="btn primary" @click="createUser">创建</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 用户配额对话框 -->
-    <div class="dialog-mask" v-if="quotaShow" @click.self="quotaShow = false">
-      <div class="dialog" style="min-width: 380px">
-        <h3>设置配额 — {{ quotaUser?.username }}</h3>
-        <div class="row">
-          <label>配额覆盖</label>
-          <div style="width: 100%">
-            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: normal">
-              <input type="radio" v-model="quotaMode" value="group" />跟随用户组（{{ groupName(quotaUser?.groupId) }}{{ groupQuotaMB(quotaUser?.groupId) > 0 ? `，${groupQuotaMB(quotaUser?.groupId)}MB` : '，不限量' }}）
-            </label>
-            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: normal; margin-top: 8px">
-              <input type="radio" v-model="quotaMode" value="unlimited" />不限量
-            </label>
-            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: normal; margin-top: 8px">
-              <input type="radio" v-model="quotaMode" value="custom" />自定义上限
-              <input class="input" type="number" min="1" v-model.number="quotaCustom" :disabled="quotaMode !== 'custom'" style="width: 120px" /> MB
-            </label>
-          </div>
-        </div>
-        <div class="row" style="color: var(--text-2); font-size: 12px">当前用量：{{ quotaUser?.usedBytes ? fmt(quotaUser.usedBytes) : '0' }}</div>
-        <div class="actions">
-          <button class="btn" @click="quotaShow = false">取消</button>
-          <button class="btn primary" @click="saveQuota">保存</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 用户权限对话框 -->
-    <div class="dialog-mask" v-if="permShow" @click.self="permShow = false">
-      <div class="dialog" style="width: 480px">
-        <h3>应用权限 — {{ permUser?.username }}</h3>
-        <div class="row" style="color: var(--text-3); font-size: 12px">
-          个人设置优先于用户组；「继承」表示跟随该用户所属用户组的设置。
-        </div>
-        <div class="row">
-          <div class="perm-grid">
-            <div v-for="a in appDefs" :key="a.key" class="perm-item"
-                 :class="{ allow: permForm[a.key] === true, deny: permForm[a.key] === false }">
-              <span class="perm-name">{{ a.name }}</span>
-              <div class="perm-seg">
-                <button class="perm-btn" :class="{ on: permForm[a.key] === undefined }" @click="setPerm(a.key, 'inherit')">继承</button>
-                <button class="perm-btn" :class="{ on: permForm[a.key] === true }" @click="setPerm(a.key, 'allow')">允许</button>
-                <button class="perm-btn" :class="{ on: permForm[a.key] === false }" @click="setPerm(a.key, 'deny')">禁止</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="actions">
-          <button class="btn" @click="permShow = false">取消</button>
-          <button class="btn primary" @click="savePerms">保存</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 用户组对话框 -->
-    <div class="dialog-mask" v-if="groupShow" @click.self="groupShow = false">
-      <div class="dialog">
-        <h3>{{ editGroup.id ? '编辑' : '新建' }}用户组</h3>
-        <div class="row"><label>名称</label><input class="input" v-model="editGroup.name" style="width: 100%" /></div>
-        <div class="row"><label>配额 MB（-1 不限）</label><input class="input" type="number" v-model.number="editGroup.quotaMB" style="width: 100%" /></div>
-        <div class="row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
-          <div><label>下载速度 KB/s（0 不限速）</label><input class="input" type="number" v-model.number="editGroup.downloadSpeedKB" style="width: 100%" /></div>
-          <div><label>回收站保留天数（0 永久）</label><input class="input" type="number" v-model.number="editGroup.recycleRetentionDays" style="width: 100%" /></div>
-        </div>
-        <div class="row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
-          <div><label>版本保留数（-1 不限）</label><input class="input" type="number" v-model.number="editGroup.keepVersions" style="width: 100%" /></div>
-          <div><label>版本保留天数（0 永久）</label><input class="input" type="number" v-model.number="editGroup.versionRetentionDays" style="width: 100%" /></div>
-        </div>
-        <div class="row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
-          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" v-model="editGroup.allowShare" />允许分享</label>
-          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" v-model="editGroup.allowWebdav" />允许 WebDAV</label>
-          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" v-model="editGroup.allowArchive" />允许压缩解压</label>
-          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" v-model="editGroup.allowOffline" />允许离线下载</label>
-          <label style="display: flex; gap: 6px; align-items: center"><input type="checkbox" v-model="editGroup.shareAllowDownload" />分享可下载</label>
-          <label style="display: flex; gap: 6px; align-items: center" title="成员仅可查看/下载自己的盘，不能新建/上传/移动/删除（管理员豁免；不影响他人授予的可写共享）"><input type="checkbox" v-model="editGroup.readOnly" />只读（仅查看/下载）</label>
-        </div>
-        <div class="row">
-          <label>应用权限（组内所有用户生效，可被用户个人设置覆盖）</label>
-          <div class="perm-grid">
-            <div v-for="a in appDefs" :key="a.key" class="perm-item"
-                 :class="{ allow: (editGroup.appPerms || {})[a.key] === true, deny: (editGroup.appPerms || {})[a.key] === false }">
-              <span class="perm-name">{{ a.name }}</span>
-              <div class="perm-seg">
-                <button class="perm-btn" :class="{ on: (editGroup.appPerms || {})[a.key] === undefined }" @click="setGroupPerm(a.key, 'inherit')">默认</button>
-                <button class="perm-btn" :class="{ on: (editGroup.appPerms || {})[a.key] === true }" @click="setGroupPerm(a.key, 'allow')">允许</button>
-                <button class="perm-btn" :class="{ on: (editGroup.appPerms || {})[a.key] === false }" @click="setGroupPerm(a.key, 'deny')">禁止</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="row"><label>备注</label><input class="input" v-model="editGroup.remark" style="width: 100%" /></div>
-        <div class="actions">
-          <button class="btn" @click="groupShow = false">取消</button>
-          <button class="btn primary" @click="saveGroup">保存</button>
-        </div>
-      </div>
-    </div>
-
     <!-- 存储策略对话框 -->
     <div class="dialog-mask" v-if="policyShow" @click.self="closePolicy">
       <div class="dialog" style="width: 480px">
@@ -744,7 +551,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSession } from '../stores/session'
 import { useAppState } from '../stores/appstate'
 import { useUiDialog, useToast } from '../stores/dialog'
-import { adminApi, appsApi } from '../api/modules'
+import { adminApi } from '../api/modules'
 import AppIcon from '../components/AppIcon.vue'
 import QRCode from 'qrcode'
 
@@ -754,8 +561,6 @@ const toast = useToast()
 const tab = ref('dash')
 const tabs = computed(() => [
   { id: 'dash', name: '仪表盘', icon: 'info' },
-  { id: 'users', name: '用户管理', icon: 'user' },
-  { id: 'groups', name: '用户组', icon: 'lock' },
   { id: 'policies', name: '存储策略', icon: 'drive' },
   { id: 'shares', name: '分享审计', icon: 'share' },
   { id: 'tasks', name: '任务监控', icon: 'list' },
@@ -883,8 +688,6 @@ async function saveUpdSource() {
     toast.error('保存失败：' + (e.message || ''))
   }
 }
-const users = ref<any[]>([])
-const groups = ref<any[]>([])
 const policies = ref<any[]>([])
 const allShares = ref<any[]>([])
 const tasks = ref<any[]>([])
@@ -898,62 +701,7 @@ const notifTotal = ref(0)
 const notifKw = ref('')
 const notifClearedOnly = ref(false)
 const settings = ref<Record<string, string>>({})
-// 系统功能清单（应用权限 UI 数据源）
-const appDefs = ref<any[]>([])
 
-const userShow = ref(false)
-const userForm = ref<any>({})
-const emptyUser = { username: '', password: '', nickname: '', role: 'user', groupId: 0 }
-// 用户配额覆盖：-1 随组 / 0 不限量 / >0 专属上限(MB)
-const quotaShow = ref(false)
-const quotaUser = ref<any>(null)
-const quotaMode = ref<'group' | 'unlimited' | 'custom'>('group')
-const quotaCustom = ref(1024)
-function groupQuotaMB(id?: number) { return groups.value.find(g => g.id === id)?.quotaMB ?? 0 }
-function userQuotaText(u: any) {
-  if (u.quotaMB === 0) return '不限量'
-  if (u.quotaMB > 0) return `${u.quotaMB} MB（专属）`
-  return '随组'
-}
-function openQuota(u: any) {
-  quotaUser.value = u
-  if (u.quotaMB === 0) quotaMode.value = 'unlimited'
-  else if (u.quotaMB > 0) { quotaMode.value = 'custom'; quotaCustom.value = u.quotaMB }
-  else quotaMode.value = 'group'
-  quotaShow.value = true
-}
-async function saveQuota() {
-  const u = quotaUser.value
-  const mb = quotaMode.value === 'group' ? -1
-    : quotaMode.value === 'unlimited' ? 0
-    : (Number(quotaCustom.value) > 0 ? Math.floor(Number(quotaCustom.value)) : 0)
-  try { await adminApi.userUpdate(u.id, { quotaMB: mb }); quotaShow.value = false; toast.success('配额已更新'); await loadAll() } catch (e: any) { toast.error(e.message) }
-}
-// 用户个人应用权限（三态：键缺失=继承用户组 / true=允许 / false=禁止）
-const permShow = ref(false)
-const permUser = ref<any>(null)
-const permForm = ref<Record<string, boolean>>({})
-function openPerms(u: any) {
-  permUser.value = u
-  permForm.value = { ...(u.appPerms || {}) }
-  permShow.value = true
-}
-function setPerm(key: string, mode: 'inherit' | 'allow' | 'deny') {
-  if (mode === 'inherit') delete permForm.value[key]
-  else permForm.value[key] = mode === 'allow'
-}
-function setGroupPerm(key: string, mode: 'inherit' | 'allow' | 'deny') {
-  if (!editGroup.value.appPerms) editGroup.value.appPerms = {}
-  if (mode === 'inherit') delete editGroup.value.appPerms[key]
-  else editGroup.value.appPerms[key] = mode === 'allow'
-}
-async function savePerms() {
-  const u = permUser.value
-  try { await adminApi.userUpdate(u.id, { appPerms: permForm.value }); permShow.value = false; toast.success('权限已更新'); await loadAll() } catch (e: any) { toast.error(e.message) }
-}
-const groupShow = ref(false)
-const editGroup = ref<any>({})
-const emptyGroup = { name: '', quotaMB: 10240, allowShare: true, allowWebdav: true, allowArchive: true, allowOffline: false, shareAllowDownload: true, readOnly: false, downloadSpeedKB: 0, recycleRetentionDays: 0, keepVersions: 10, versionRetentionDays: 0, appPerms: {}, remark: '' }
 const policyShow = ref(false)
 const editPolicy = ref<any>({})
 const emptyPolicy = { type: 'local', name: '', letter: '', rootPath: '' }
@@ -977,9 +725,6 @@ onUnmounted(() => { stopSysPoll(); stopAuthPoll(); stopUpdPoll() })
 async function loadAll() {
   try {
     dash.value = await adminApi.dashboard()
-    users.value = (await adminApi.users(1, 100)).items
-    groups.value = await adminApi.groups()
-    appDefs.value = await appsApi.list()
     policies.value = await adminApi.policies()
     settings.value = await adminApi.settings()
     allShares.value = (await adminApi.shares(1, 100)).items
@@ -1006,8 +751,6 @@ function exportLogs() {
   window.open(adminApi.logsExport(logKw.value.trim()), '_blank')
 }
 
-function groupName(id: number) { return groups.value.find(g => g.id === id)?.name || id }
-function yn(v: boolean) { return v ? '✓' : '✗' }
 function typeName(t: string) {
   return ({ local: '本地目录', pan123: '123云盘', aliyun: '阿里云盘', baidu: '百度网盘', tianyi: '天翼云盘' } as any)[t] || t
 }
@@ -1024,28 +767,6 @@ function fmtGB(n: number) {
   return (n / (1 << 30)).toFixed(1) + ' GB'
 }
 
-async function createUser() {
-  try { await adminApi.userCreate(userForm.value); userShow.value = false; await loadAll() } catch (e: any) { toast.error(e.message) }
-}
-async function toggleUser(u: any) {
-  try { await adminApi.userUpdate(u.id, { disabled: !u.disabled }); loadAll() } catch (e: any) { toast.error(e.message) }
-}
-async function resetPwd(u: any) {
-  const pwd = await uiDlg.prompt(`重置 ${u.username} 的密码`, '', '重置')
-  if (!pwd) return
-  try { await adminApi.userResetPwd(u.id, pwd); toast.success('密码已重置') } catch (e: any) { toast.error(e.message) }
-}
-async function delUser(u: any) {
-  if (!(await uiDlg.confirm('删除用户', `确定删除用户 ${u.username}？其登录将立即失效。`, { danger: true, okText: '删除' }))) return
-  try { await adminApi.userDelete(u.id); loadAll() } catch (e: any) { toast.error(e.message) }
-}
-async function saveGroup() {
-  try { await adminApi.groupSave({ ...editGroup.value, allowedPolicyIds: editGroup.value.allowedPolicyIds || '' }); groupShow.value = false; loadAll() } catch (e: any) { toast.error(e.message) }
-}
-async function delGroup(g: any) {
-  if (!confirm(`删除用户组 ${g.name}？`)) return
-  try { await adminApi.groupDelete(g.id); loadAll() } catch (e: any) { toast.error(e.message) }
-}
 async function editPolicyRow(p: any) {
   editPolicy.value = { id: p.id, name: p.name, letter: p.letter, type: p.type, rootPath: p.rootPath }
   pOpts.value = { ...(p.options || {}) }

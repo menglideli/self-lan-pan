@@ -82,7 +82,7 @@ import { useRoute } from 'vue-router'
 import axios from 'axios'
 import AppIcon from '../components/AppIcon.vue'
 import { get, getToken } from '../api/http'
-import { shareApi, userShareApi, downloadUrl } from '../api/modules'
+import { shareApi, downloadUrl } from '../api/modules'
 import { copyText } from '../utils/clipboard'
 
 const route = useRoute()
@@ -124,9 +124,7 @@ async function pollStatus() {
       if (r.code !== 0) return
       d = r.data
     } else {
-      const qs = q.shareId
-        ? `shareId=${q.shareId}&rel=${encodeURIComponent(q.rel || '')}`
-        : `policyId=${q.policyId}&path=${encodeURIComponent(q.path || '')}`
+      const qs = `policyId=${q.policyId}&path=${encodeURIComponent(q.path || '')}`
       d = await get<any>(`/office/status?${qs}&sess=${sessID}&mode=${q.mode || 'edit'}`)
     }
     const eds: any[] = d.editors || []
@@ -167,9 +165,7 @@ async function loadConfig(): Promise<any> {
     if (r.code !== 0) throw new Error(r.msg || '无法打开在线编辑器')
     return r.data
   }
-  const qs = q.shareId
-    ? `shareId=${q.shareId}&rel=${encodeURIComponent(q.rel || '')}`
-    : `policyId=${q.policyId}&path=${encodeURIComponent(q.path || '')}`
+  const qs = `policyId=${q.policyId}&path=${encodeURIComponent(q.path || '')}`
   return get<any>(`/office/config?${qs}&mode=${q.mode || 'edit'}`)
 }
 
@@ -222,8 +218,6 @@ function close() {
 function download() {
   if (isShare.value) {
     window.open(`/api/s/${shareToken}/download?st=${encodeURIComponent(q.st || '')}&path=${encodeURIComponent(q.path || '')}`)
-  } else if (q.shareId) {
-    window.open(userShareApi.dlUrl(q.shareId, q.rel || ''))
   } else {
     window.open(downloadUrl(Number(q.policyId), [q.path || '']))
   }

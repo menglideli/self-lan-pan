@@ -1,29 +1,16 @@
 <template>
-  <!-- #loginback：壁纸上居中 150px 头像 + 用户名 + 幽灵输入 + 登录钮；
+  <!-- #loginback：壁纸上居中 150px 头像 + 名称 + 密码输入 + 登录钮；
        成功后 #login-welc（转环+欢迎）→ .close（整体压暗）→ 淡出进桌面。
-       默认游客登录（不暴露任何账号名）；「使用账号登录」切换账号密码模式 -->
+       单用户私有部署：账号固定为管理员，不再有用户名输入 / 游客登录 / 注册入口 -->
   <div class="w12-login" :class="wallpaperClass(session.wallpaper)" :style="{ backgroundColor: 'transparent' }">
     <div class="w12-login-user"></div>
-    <div class="w12-login-name">{{ mode === 'guest' ? '游客' : (username || '用户') }}</div>
+    <div class="w12-login-name">{{ displayName }}</div>
 
     <template v-if="stage === 'form'">
-      <template v-if="mode === 'guest' && session.site.guestLogin">
-        <button class="w12-login-btn" :disabled="loading" @click="doGuestLogin">{{ loading ? '进入中' : '游客登录' }}</button>
-        <div class="w12-login-switch">
-          <a @click="mode = 'account'">使用账号登录 →</a>
-        </div>
-      </template>
-      <template v-else>
-        <input class="w12-login-pwd" type="text" placeholder="用户名" v-model="username" @keyup.enter="doLogin" ref="nameEl"
-          :style="{ opacity: stage === 'form' ? 1 : 0, transition: 'opacity 300ms' }" />
-        <input class="w12-login-pwd" type="password" placeholder="密码" v-model="password" :disabled="loading"
-          @keyup.enter="doLogin" ref="pwdEl" :style="{ opacity: stage === 'form' ? 1 : 0, transition: 'opacity 300ms' }" />
-        <div class="w12-login-err">{{ errMsg }}</div>
-        <button class="w12-login-btn" :disabled="loading" @click="doLogin">{{ loading ? '登录中' : '登录' }}</button>
-        <div class="w12-login-switch" v-if="session.site.guestLogin">
-          <a @click="mode = 'guest'">← 以游客身份进入</a>
-        </div>
-      </template>
+      <input class="w12-login-pwd" type="password" placeholder="密码" v-model="password" :disabled="loading"
+        @keyup.enter="doLogin" ref="pwdEl" />
+      <div class="w12-login-err">{{ errMsg }}</div>
+      <button class="w12-login-btn" :disabled="loading" @click="doLogin">{{ loading ? '登录中' : '登录' }}</button>
     </template>
 
     <div class="w12-login-welc" :class="{ on: stage === 'welcome' }">
@@ -35,9 +22,6 @@
     </div>
 
     <div class="w12-login-notice" v-if="session.site.announcement" v-html="noticeHtml"></div>
-    <div class="w12-login-reg" v-if="session.site.registerOpen">
-      <a href="#/register">注册新账号</a>
-    </div>
     <!-- 演示文档入口（管理台站点设置填入演示分享 token 后显示） -->
     <div class="w12-login-demo" v-if="session.site.demoShare">
       <a :href="'#/s/' + session.site.demoShare">体验在线文档</a>
@@ -56,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSession } from '../../stores/session'
 import { wallpaperClass } from '../../assets/wallpapers'
@@ -65,33 +49,22 @@ import { renderMD } from '../../utils/markdown'
 
 const router = useRouter()
 const session = useSession()
+// 单用户私有部署：系统只有管理员一个账号，登录页不再暴露用户名（固定用此账号名提交）
+const ADMIN_USER = 'admin'
 // 公告支持 Markdown（管理台站点设置编写，DOMPurify 消毒后渲染）
 const noticeHtml = computed(() => renderMD(session.site.announcement || ''))
-// 登录模式：guest=游客登录（默认）/ account=账号密码。站点关闭游客登录后强制账号模式
-const mode = ref<'guest' | 'account'>('guest')
-const username = ref('')
 const password = ref('')
 const loading = ref(false)
 const stage = ref<'form' | 'welcome'>('form')
 const errMsg = ref('')
-const nameEl = ref<HTMLInputElement>()
 const pwdEl = ref<HTMLInputElement>()
 
-const displayName = computed(() => session.user?.nickname || session.user?.username || (mode.value === 'guest' ? '游客' : (username.value || '用户')))
-
-watch(() => session.site.guestLogin, (ok) => { if (!ok) mode.value = 'account' })
+const displayName = computed(() => session.user?.nickname || session.user?.username || '管理员')
 
 onMounted(() => {
   session.loadSite()
-  nextTick(() => {
-    if (mode.value === 'account') nameEl.value?.focus()
-  })
+  nextTick(() => pwdEl.value?.focus())
 })
-
-function focusName() {
-  nextTick(() => nameEl.value?.focus())
-}
-watch(mode, (m) => { if (m === 'account') focusName() })
 
 // 登录成功后的统一收尾：欢迎动画 → 压暗 → 淡出进桌面
 function enterDesktop() {
@@ -107,29 +80,12 @@ function enterDesktop() {
   }, 1400)
 }
 
-async function doGuestLogin() {
-  if (loading.value) return
-  loading.value = true
-  errMsg.value = ''
-  try {
-    const res = await import('../../api/modules').then(m => m.authApi.guest())
-    setToken(res.token, res.refreshToken)
-    await session.loadMe()
-    enterDesktop()
-  } catch (e: any) {
-    errMsg.value = e.message
-    mode.value = 'account'
-  } finally {
-    loading.value = false
-  }
-}
-
 async function doLogin() {
-  if (!username.value || !password.value || loading.value) return
+  if (!password.value || loading.value) return
   loading.value = true
   errMsg.value = ''
   try {
-    const res = await import('../../api/modules').then(m => m.authApi.login(username.value, password.value))
+    const res = await import('../../api/modules').then(m => m.authApi.login(ADMIN_USER, password.value))
     setToken(res.token, res.refreshToken)
     await session.loadMe()
     enterDesktop()

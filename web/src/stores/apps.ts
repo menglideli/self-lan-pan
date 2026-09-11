@@ -36,7 +36,6 @@ export const APPS: AppDef[] = [
   { id: 'wallpapers', name: '壁纸中心', icon: 'wallpapers', w: 860, h: 600, desktop: true, pinned: true },
   // 图库：按月份分组的照片墙（递归收集 + 缩略图缓存），点击进图片查看器灯箱
   { id: 'photos', name: '图库', icon: 'image', w: 1000, h: 660, desktop: true, installable: true },
-  { id: 'shared', name: '来自他人的共享', icon: 'share', w: 900, h: 600, pinned: true, feature: 'usershare' },
   { id: 'appcenter', name: '应用中心', icon: 'appstore', w: 980, h: 640, desktop: true, pinned: true, feature: 'app_center' },
   { id: 'settings', name: '设置', icon: 'settings', w: 900, h: 620, desktop: true, pinned: true },
   { id: 'admin', name: '管理控制台', icon: 'admin', w: 1060, h: 680, desktop: true, pinned: true, adminOnly: true }
@@ -65,12 +64,12 @@ export function installableApps() {
   return APPS.filter(a => a.installable)
 }
 
-// 当前用户能否使用离线下载（与后端一致：offline_http/bt 任一功能可用 且 用户组启用）
+// 当前用户能否使用离线下载（与后端一致：offline_http/bt 任一功能可用，权限档案已全开）
 // 无权限时所有入口（设置页签/资源管理器右键/搜索面板）整体隐藏
 export function canUseOffline(): boolean {
   const s = useSession()
   const apps = useAppState()
-  return (apps.isAvailable('offline_http') || apps.isAvailable('bt')) && !!s.group?.allowOffline
+  return (apps.isAvailable('offline_http') || apps.isAvailable('bt')) && !!s.perms?.allowOffline
 }
 
 export interface DesktopAppIcon { id: string; name: string; icon: string; appId: string }

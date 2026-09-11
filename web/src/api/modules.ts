@@ -1,17 +1,15 @@
 import { api, get, post, put, del, getToken } from './http'
 export interface User {
   id: number; username: string; nickname: string; avatar: number
-  role: string; groupId: number; usedBytes: number
-  appPerms?: Record<string, boolean> // 个人应用权限覆盖（键缺失=跟随用户组）
+  role: string; usedBytes: number
 }
-export interface UserGroup {
-  id: number; name: string; quotaMB: number; allowShare: boolean; allowWebdav: boolean
+// Perms 权限档案（单用户私有部署：后端写死为管理员全开，纯值对象，不入库）
+export interface Perms {
+  name: string; quotaMB: number; allowShare: boolean; allowWebdav: boolean
   allowArchive: boolean; allowOffline: boolean; shareAllowDownload: boolean
-  readOnly: boolean // 只读用户组：成员仅可查看/下载
-  downloadSpeedKB: number; recycleRetentionDays: number
-  keepVersions: number; versionRetentionDays: number
-  allowedPolicyIds: string; isDefault: boolean; remark: string
-  appPerms: Record<string, boolean> // 组级应用权限（键缺失=允许）
+  readOnly: boolean; downloadSpeedKB: number
+  recycleRetentionDays: number; keepVersions: number; versionRetentionDays: number
+  allowedPolicyIDs: string; appPerms: string; remark: string
 }
 export interface Policy {
   id: number; name: string; letter: string; type: string; rootPath: string
@@ -23,20 +21,16 @@ export interface FileItem {
 }
 
 export const authApi = {
-  // isGuest：是否游客共享账号（系统托管身份，前端据此隐藏账号自管理入口；后端另有 GuestReadOnly 兜底）
-  login: (username: string, password: string) => post<{ token: string; refreshToken: string; user: User; isGuest: boolean }>('/auth/login', { username, password }),
-  // 游客登录：登录页「游客登录」入口，无需凭据（后端为共享游客账号签发 24h 令牌）
-  guest: () => post<{ token: string; refreshToken: string; user: User; isGuest: boolean }>('/auth/guest', {}),
-  register: (username: string, password: string, nickname: string, inviteCode: string) =>
-    post<{ token: string; refreshToken: string; user: User; isGuest: boolean }>('/auth/register', { username, password, nickname, inviteCode }),
-  me: () => get<{ user: User; group: UserGroup; isGuest: boolean }>('/auth/me'),
+  // 单用户私有部署：用户名固定为管理员账号，登录只需密码（后端仍收 username 字段）
+  login: (username: string, password: string) => post<{ token: string; refreshToken: string; user: User }>('/auth/login', { username, password }),
+  me: () => get<{ user: User; perms: Perms }>('/auth/me'),
   updateMe: (d: any) => put('/users/me', d),
   changePassword: (old_: string, new_: string) => put('/users/me/password', { old: old_, new: new_ }),
   setWebdavPassword: (password: string) => put('/users/me/webdav-password', { password })
 }
 
 export const siteApi = {
-  publicInfo: () => get<{ siteName: string; registerOpen: boolean; needInviteCode: boolean; officeConfigured: boolean; announcement: string; guestLogin: boolean; theme: string; demoShare: string; standaloneApps: boolean; wallpaperCatalog: { name: string; url: string }[] }>('/site/public')
+  publicInfo: () => get<{ siteName: string; officeConfigured: boolean; announcement: string; theme: string; demoShare: string; standaloneApps: boolean; wallpaperCatalog: { name: string; url: string }[] }>('/site/public')
 }
 
 // 在线 Office：实时协作「正在编辑」状态
@@ -121,14 +115,6 @@ export const settingsApi = {
 export const adminApi = {
   dashboard: () => get<any>('/admin/dashboard'),
   system: () => get<any>('/admin/system'),
-  users: (page = 1, size = 20, keyword = '') => get<any>(`/admin/users?page=${page}&size=${size}&keyword=${encodeURIComponent(keyword)}`),
-  userCreate: (d: any) => post('/admin/users', d),
-  userUpdate: (id: number, d: any) => put(`/admin/users/${id}`, d),
-  userResetPwd: (id: number, password: string) => put(`/admin/users/${id}/password`, { password }),
-  userDelete: (id: number) => del(`/admin/users/${id}`),
-  groups: () => get<UserGroup[]>('/admin/groups'),
-  groupSave: (d: any) => post('/admin/groups', d),
-  groupDelete: (id: number) => del(`/admin/groups/${id}`),
   policies: () => get<Policy[]>('/admin/policies'),
   policyCreate: (d: any) => post('/admin/policies', d),
   policyUpdate: (id: number, d: any) => put(`/admin/policies/${id}`, d),
@@ -167,28 +153,7 @@ export const uploadApi = {
   status: (sid: string) => get<any>(`/upload/${sid}/status`)
 }
 
-// 站内用户共享
-export const userShareApi = {
-  users: () => get<any[]>('/users'),
-  groups: () => get<{ id: number; name: string }[]>('/groups'),
-  // targetType: user=指定用户 / group=用户组 / all=所有人（all 时 targetId=0）
-  create: (d: { policyId: number; path: string; targetType: 'user' | 'group' | 'all'; targetId: number; perm: string }) => post<any>('/usershares', d),
-  mine: () => get<any[]>('/usershares'),
-  cancel: (id: number) => del(`/usershares/${id}`),
-  withMe: () => get<any[]>('/usershares/with-me'),
-  info: (id: number) => get<any>(`/shared/${id}/info`),
-  list: (id: number, rel: string) => get<{ items: any[]; perm: string; name: string; rel: string }>(`/shared/${id}/list?rel=${encodeURIComponent(rel)}`),
-  mkdir: (id: number, rel: string, name: string) => post(`/shared/${id}/mkdir`, { rel, name }),
-  del: (id: number, rels: string[]) => post(`/shared/${id}/delete`, { rels }),
-  upload: (id: number, rel: string, file: File) => {
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('rel', rel)
-    return post('/shared/' + id + '/upload', fd)
-  },
-  rawUrl: (id: number, rel: string) => `/api/shared/${id}/raw?rel=${encodeURIComponent(rel)}&t=${getToken()}`,
-  dlUrl: (id: number, rel: string) => `/api/shared/${id}/download?rel=${encodeURIComponent(rel)}&t=${getToken()}`
-}
+// 站内用户共享（usershare）已随单用户私有化删除：没有"他人"可共享
 
 // img/video/iframe/a 标签无法带 Authorization 头，改用 ?t= 查询令牌
 export function rawUrl(policyId: number, path: string) {

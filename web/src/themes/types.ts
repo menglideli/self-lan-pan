@@ -1,6 +1,7 @@
 import type { Component } from 'vue'
 
-export type ThemeId = 'win12' | 'macos' | 'deepin'
+// 单用户私有部署只保留 Windows 12 概念风格一种主题
+export type ThemeId = 'win12'
 
 export interface WallpaperDef {
   key: string
@@ -23,16 +24,16 @@ export interface ThemeDef {
   /** 挂到 <html> 上的主题类 */
   rootClass: string
   // 一整套外壳组件（结构随主题完全不同，全部由现有 Pinia stores 驱动）
+  // 单用户私有部署已移除注册功能，故不再有 Register 屏
   Boot: Component
   Login: Component
-  Register: Component
   Lock: Component
   Desktop: Component
   WindowFrame: Component
   geometry: ThemeGeometry
-  /** 窗口标题栏控制按钮位置：macOS=left（红绿灯），Windows/Deepin=right */
+  /** 窗口标题栏控制按钮位置：Windows 系在右 */
   caption: 'left' | 'right'
-  /** 是否支持贴边分屏（Windows/Deepin 有，macOS 用 zoom 语义） */
+  /** 是否支持贴边分屏 */
   snapEdges: boolean
   wallpapers: WallpaperDef[]
   defaultWallpaper: string

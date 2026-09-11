@@ -2,7 +2,6 @@ import type { ThemeDef } from '../types'
 import './win.css'
 import WinBoot from './WinBoot.vue'
 import WinLogin from './WinLogin.vue'
-import WinRegister from './WinRegister.vue'
 import WinLock from './WinLock.vue'
 import WinDesktop from './WinDesktop.vue'
 import WinWindowFrame from './WinWindowFrame.vue'
@@ -17,7 +16,6 @@ import { WALLPAPERS } from './wallpapers'
     rootClass: 'theme-win12',
     Boot: WinBoot,
     Login: WinLogin,
-    Register: WinRegister,
     Lock: WinLock,
     Desktop: WinDesktop,
     WindowFrame: WinWindowFrame,

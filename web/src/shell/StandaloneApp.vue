@@ -18,14 +18,7 @@
         <AppIcon :name="app?.icon || 'app'" :size="26" />
         <div style="font-size: 15px; font-weight: 600">{{ app?.name || '应用' }} · 独立模式</div>
       </div>
-      <div v-if="site.guestLogin" style="margin-bottom: 14px">
-        <button class="btn primary" style="width: 100%" :disabled="busy" @click="doGuest">游客登录</button>
-      </div>
-      <div v-if="site.guestLogin" style="display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 11px; color: var(--text-3)">
-        <div style="flex: 1; height: 1px; background: var(--stroke)"></div>或账号登录<div style="flex: 1; height: 1px; background: var(--stroke)"></div>
-      </div>
       <div style="display: flex; flex-direction: column; gap: 10px">
-        <input class="input" v-model="username" placeholder="用户名" @keyup.enter="doLogin" />
         <input class="input" type="password" v-model="password" placeholder="密码" :disabled="busy" @keyup.enter="doLogin" />
         <div v-if="errMsg" style="font-size: 12px; color: #e5534b">{{ errMsg }}</div>
         <button class="btn primary" :disabled="busy" @click="doLogin">{{ busy ? '登录中…' : '登录' }}</button>
@@ -85,9 +78,10 @@ const blockReason = ref('')
 const blockHint = ref('')
 const busy = ref(false)
 const errMsg = ref('')
-const username = ref('')
+// 单用户私有部署：系统只有管理员一个账号，登录页不再暴露用户名
+const ADMIN_USER = 'admin'
 const password = ref('')
-const site = ref<any>({ guestLogin: false, standaloneApps: true, theme: 'win12' })
+const site = ref<any>({ standaloneApps: true, theme: 'win12' })
 
 const wpClass = computed(() => wallpaperClass(session.wallpaper))
 
@@ -155,27 +149,13 @@ async function init() {
 async function doLogin() {
   busy.value = true; errMsg.value = ''
   try {
-    const d = await authApi.login(username.value, password.value)
+    const d = await authApi.login(ADMIN_USER, password.value)
     setToken(d.token, d.refreshToken)
     await session.loadMe()
     authed.value = true
     await checkAuth()
   } catch (e: any) {
     errMsg.value = e.message || '登录失败'
-  } finally {
-    busy.value = false
-  }
-}
-async function doGuest() {
-  busy.value = true; errMsg.value = ''
-  try {
-    const d = await authApi.guest()
-    setToken(d.token, d.refreshToken)
-    await session.loadMe()
-    authed.value = true
-    await checkAuth()
-  } catch (e: any) {
-    errMsg.value = e.message || '游客登录失败'
   } finally {
     busy.value = false
   }

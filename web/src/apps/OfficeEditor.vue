@@ -94,7 +94,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import axios from 'axios'
 import { get, post, put } from '../api/http'
-import { rawUrl, downloadUrl, userShareApi } from '../api/modules'
+import { rawUrl, downloadUrl } from '../api/modules'
 import { useSession } from '../stores/session'
 import { useToast } from '../stores/dialog'
 import AppIcon from '../components/AppIcon.vue'
@@ -104,9 +104,8 @@ const session = useSession()
 const toast = useToast()
 const ext = computed(() => (props.props?.ext || '').toLowerCase())
 
-// 文件来源：本地盘（policyId+path）或共享盘（shareId+rel，perm 来自共享）
-const isShared = computed(() => !!props.props?.shareId)
-const canWriteFile = computed(() => !isShared.value || props.props?.perm === 'rw')
+// 文件来源：本地盘（policyId+path）。站内共享盘已随单用户私有化删除
+const canWriteFile = computed(() => true)
 
 const mode = ref<'ds' | 'pdf' | 'static' | 'none'>('none')
 const dsError = ref('')
@@ -130,10 +129,8 @@ const isEditable = computed(() =>
 const fallbackMode = computed(() => mode.value !== 'ds')
 // 缓存穿透计数：保存后递增，强制 iframe/文档重新拉取最新内容
 const cacheBust = ref(0)
-const rawSrc = computed(() => (isShared.value
-  ? userShareApi.rawUrl(props.props.shareId, props.props.rel)
-  : rawUrl(props.props.policyId, props.props.path)) + '&b=' + cacheBust.value)
-const noFile = computed(() => !props.props?.path && !props.props?.shareId)
+const rawSrc = computed(() => rawUrl(props.props.policyId, props.props.path) + '&b=' + cacheBust.value)
+const noFile = computed(() => !props.props?.path)
 const noPreviewHint = computed(() => {
   if (noFile.value) {
     return '未打开任何文档。\n在文件资源管理器中双击 Office 文件即可打开编辑（或右键「打开方式 → Office 编辑器」）。'
@@ -286,38 +283,28 @@ async function saveEdit() {
       buf = new Uint8Array([0xef, 0xbb, 0xbf, ...new Uint8Array(buf)])
     }
 
-    // 上传新文件（覆盖原文件）
-    if (isShared.value) {
-      // 共享盘：multipart 直传（rel=父目录；服务端 CreateFile 截断覆盖，ro 共享由后端 403）
-      const parent = props.props.rel.substring(0, props.props.rel.lastIndexOf('/'))
-      const fd = new FormData()
-      fd.append('file', new Blob([buf], { type: 'application/octet-stream' }), props.props.name)
-      fd.append('rel', parent)
-      await post('/shared/' + props.props.shareId + '/upload', fd)
-    } else {
-      // 本地盘：分块上传会话（秒传直接返回）
-      const initResp = await post('/upload/init', {
-        policyId: props.props.policyId,
-        parent: props.props.path.substring(0, props.props.path.lastIndexOf('/')) || '/',
-        name: props.props.name,
-        size: buf.byteLength,
-        chunkSize: 8 * 1024 * 1024,
-        hash: ''
-      })
+    // 上传新文件（覆盖原文件）：分块上传会话（秒传直接返回）
+    const initResp = await post('/upload/init', {
+      policyId: props.props.policyId,
+      parent: props.props.path.substring(0, props.props.path.lastIndexOf('/')) || '/',
+      name: props.props.name,
+      size: buf.byteLength,
+      chunkSize: 8 * 1024 * 1024,
+      hash: ''
+    })
 
-      if (!initResp.instant) {
-        const chunkSize = 8 * 1024 * 1024
-        const chunks: number = Math.ceil(buf.byteLength / chunkSize)
-        for (let i = 0; i < chunks; i++) {
-          const start = i * chunkSize
-          const end = Math.min(start + chunkSize, buf.byteLength)
-          await put(`/upload/chunk/${initResp.sessionId}/${i}`, buf.slice(start, end), {
-            headers: { 'Content-Type': 'application/octet-stream' },
-            timeout: 0
-          })
-        }
-        await post('/upload/complete', { sessionId: initResp.sessionId })
+    if (!initResp.instant) {
+      const chunkSize = 8 * 1024 * 1024
+      const chunks: number = Math.ceil(buf.byteLength / chunkSize)
+      for (let i = 0; i < chunks; i++) {
+        const start = i * chunkSize
+        const end = Math.min(start + chunkSize, buf.byteLength)
+        await put(`/upload/chunk/${initResp.sessionId}/${i}`, buf.slice(start, end), {
+          headers: { 'Content-Type': 'application/octet-stream' },
+          timeout: 0
+        })
       }
+      await post('/upload/complete', { sessionId: initResp.sessionId })
     }
 
     toast.success('保存成功')
@@ -469,11 +456,8 @@ async function fetchBuffer(): Promise<ArrayBuffer> {
 
 async function initDs() {
   try {
-    const qs = isShared.value
-      ? `shareId=${props.props.shareId}&rel=${encodeURIComponent(props.props.rel)}`
-      : `policyId=${props.props.policyId}&path=${encodeURIComponent(props.props.path)}`
-    // 只读共享后端会强制 view，前端同步传 view 以便编辑器直接进入只读态
-    const wantMode = (isShared.value && props.props?.perm !== 'rw') ? 'view' : (props.props.mode || 'edit')
+    const qs = `policyId=${props.props.policyId}&path=${encodeURIComponent(props.props.path)}`
+    const wantMode = props.props.mode || 'edit'
     const d = await get<any>(`/office/config?${qs}&mode=${wantMode}`)
     await loadScript(d.documentServer + '/web-apps/apps/api/documents/api.js')
     editor = new (window as any).DocsAPI.DocEditor('cp-office-placeholder', {
@@ -538,10 +522,6 @@ function loadScript(src: string): Promise<void> {
 }
 
 function download() {
-  if (isShared.value) {
-    window.open(userShareApi.dlUrl(props.props.shareId, props.props.rel))
-    return
-  }
   window.open(downloadUrl(props.props.policyId, [props.props.path]))
 }
 </script>

@@ -1,14 +1,11 @@
 import { defineAsyncComponent, type Component } from 'vue'
 import type { ThemeDef, ThemeId } from './types'
 import win12 from './windows'
-import macos from './macos'
-import deepin from './deepin'
 
 // 主题包注册表：新增主题 = 新建 themes/<id>/ 目录 + 在此登记
+// 单用户私有部署只保留 Windows 12 概念风格（原 macos / deepin 整包已删除）
 export const THEMES: Partial<Record<ThemeId, ThemeDef>> = {
-  win12,
-  macos,
-  deepin
+  win12
 }
 
 export function availableThemes(): ThemeDef[] {
@@ -56,7 +53,6 @@ const APP_COMPONENTS: Record<string, Component> = {
   wallpapers: asyncApp(() => import('../apps/WallpaperCenter.vue')),
   photos: asyncApp(() => import('../apps/Photos.vue')),
   officeeditor: asyncApp(() => import('../apps/OfficeEditor.vue')),
-  shared: asyncApp(() => import('../apps/SharedBrowser.vue')),
   appcenter: asyncApp(() => import('../apps/AppCenter.vue')),
   settings: asyncApp(() => import('../apps/SettingsApp.vue')),
   admin: asyncApp(() => import('../apps/AdminConsole.vue'))

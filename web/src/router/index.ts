@@ -7,7 +7,6 @@ const router = createRouter({
     { path: '/', redirect: '/boot' },
     { path: '/boot', component: ShellHost, props: { screen: 'Boot' } },
     { path: '/login', component: ShellHost, props: { screen: 'Login' } },
-    { path: '/register', component: ShellHost, props: { screen: 'Register' } },
     { path: '/desktop', component: ShellHost, props: { screen: 'Desktop' } },
     { path: '/s/:token', component: () => import('../shell/SharePage.vue') },
     // 整页 Office 编辑器（Cloudreve 模式）：登录态 /office，公开分享 /s/:token/office

@@ -10,11 +10,6 @@
       </div>
       <div class="exp-tab-add" title="新建标签页" @click="addTab(null, '/')"><AppIcon name="plus" :size="13" /></div>
     </div>
-    <!-- 游客临时空间提示：上传的文件 24 小时后自动清除（后端 sweepGuestWorkspace 执行清理） -->
-    <div v-if="session.isGuest && !onSharedDrive" class="guest-ttl-bar">
-      <AppIcon name="info" :size="13" />
-      <span>游客临时空间：文件在上传 24 小时后自动清除，重要内容请及时下载</span>
-    </div>
     <!-- 工具栏 -->
     <div class="app-toolbar">
       <button class="tool-btn" :disabled="!canBack" @click="back" title="后退"><AppIcon name="back" :size="16" /></button>
@@ -23,17 +18,6 @@
       <button class="tool-btn" @click="refresh" title="刷新"><AppIcon name="refresh" :size="16" /></button>
       <div class="crumb" style="flex: 1; margin: 0 8px">
         <span v-if="!currentPolicy">此电脑</span>
-        <template v-else-if="onSharedDrive">
-          <span @click="goto('/')">共享</span>
-          <template v-if="currentShare">
-            <AppIcon name="fwd" :size="11" style="opacity: 0.5" />
-            <span @click="goto('/s' + currentShare.id)">{{ currentShare.name }}</span>
-            <template v-for="(seg, i) in sharedSegs">
-              <AppIcon name="fwd" :size="11" style="opacity: 0.5" />
-              <span @click="goto('/s' + currentShare.id + '/' + sharedSegs.slice(0, i + 1).join('/'))">{{ seg }}</span>
-            </template>
-          </template>
-        </template>
         <template v-else>
           <span @click="openPolicy(currentPolicy)">{{ currentPolicy.name }}</span>
           <template v-for="(seg, i) in segs">
@@ -57,20 +41,20 @@
 
     <!-- 操作栏 -->
     <div class="app-toolbar" style="padding: 4px 10px">
-      <button class="tool-btn" :disabled="!canWriteHere" @click.stop="onSharedDrive ? sharedNewMenu($event) : newMenu($event)"><AppIcon name="plus" :size="15" />新建</button>
-      <button class="tool-btn" :disabled="!canWriteHere" @click.stop="onSharedDrive ? sharedPickFiles() : uploadMenu($event)"><AppIcon name="upload" :size="15" />上传</button>
+      <button class="tool-btn" :disabled="!canWriteHere" @click.stop="newMenu($event)"><AppIcon name="plus" :size="15" />新建</button>
+      <button class="tool-btn" :disabled="!canWriteHere" @click.stop="uploadMenu($event)"><AppIcon name="upload" :size="15" />上传</button>
       <button class="tool-btn" :disabled="!selPaths.length" @click="downloadSel"><AppIcon name="download" :size="15" />下载</button>
-      <button v-if="canSharePub" class="tool-btn" :disabled="!selPaths.length || onSharedDrive" @click="shareSel"><AppIcon name="share2" :size="15" />分享</button>
+      <button v-if="canSharePub" class="tool-btn" :disabled="!selPaths.length" @click="shareSel"><AppIcon name="share2" :size="15" />分享</button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" :disabled="!selPaths.length || onSharedDrive || readOnly" @click="cutSel"><AppIcon name="cut" :size="15" />剪切</button>
-      <button class="tool-btn" :disabled="!selPaths.length || onSharedDrive || readOnly" @click="copySel"><AppIcon name="copy" :size="15" />复制</button>
-      <button class="tool-btn" :disabled="!clip.mode || !currentPolicy || onSharedDrive || readOnly" @click="pasteSel"><AppIcon name="paste" :size="15" />粘贴</button>
+      <button class="tool-btn" :disabled="!selPaths.length || readOnly" @click="cutSel"><AppIcon name="cut" :size="15" />剪切</button>
+      <button class="tool-btn" :disabled="!selPaths.length || readOnly" @click="copySel"><AppIcon name="copy" :size="15" />复制</button>
+      <button class="tool-btn" :disabled="!clip.mode || !currentPolicy || readOnly" @click="pasteSel"><AppIcon name="paste" :size="15" />粘贴</button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" :disabled="selPaths.length !== 1 || onSharedDrive || readOnly" @click="renameSel"><AppIcon name="rename" :size="15" />重命名</button>
-      <button class="tool-btn" :disabled="selPaths.length < 2 || onSharedDrive || readOnly" @click="batchRenameOpen" title="对选中项批量重命名"><AppIcon name="rename" :size="15" />批量重命名</button>
-      <button class="tool-btn" :disabled="!selPaths.length || readOnly || (onSharedDrive && !inWritableShare)" @click="deleteSel"><AppIcon name="trash" :size="15" />删除</button>
-      <button class="tool-btn" v-if="group.allowArchive && selPaths.length && !onSharedDrive && !readOnly" @click="archiveSel"><AppIcon name="archive" :size="15" />压缩</button>
-      <button class="tool-btn" v-if="singleZipSelected && !onSharedDrive" @click="extractSel"><AppIcon name="archive" :size="15" />解压</button>
+      <button class="tool-btn" :disabled="selPaths.length !== 1 || readOnly" @click="renameSel"><AppIcon name="rename" :size="15" />重命名</button>
+      <button class="tool-btn" :disabled="selPaths.length < 2 || readOnly" @click="batchRenameOpen" title="对选中项批量重命名"><AppIcon name="rename" :size="15" />批量重命名</button>
+      <button class="tool-btn" :disabled="!selPaths.length || readOnly" @click="deleteSel"><AppIcon name="trash" :size="15" />删除</button>
+      <button class="tool-btn" v-if="perms.allowArchive && selPaths.length && !readOnly" @click="archiveSel"><AppIcon name="archive" :size="15" />压缩</button>
+      <button class="tool-btn" v-if="singleZipSelected" @click="extractSel"><AppIcon name="archive" :size="15" />解压</button>
       <div style="flex: 1"></div>
       <button class="tool-btn" :class="{ 'global-on': previewMode }" title="预览窗格（Alt+P）" @click="togglePreview">
         <AppIcon name="preview" :size="15" />
@@ -96,36 +80,10 @@
           <span style="flex: 1">{{ p.name }}</span>
           <span style="font-size: 10.5px; color: var(--text-3)">{{ p.letter }}</span>
         </div>
-        <div class="side-item" :class="{ active: onSharedDrive }" @click="openSharedDrive">
-          <AppIcon name="share2" :size="16" />
-          <span style="flex: 1">共享</span>
-          <span style="font-size: 10.5px; color: var(--text-3)">{{ sharedWithMe.length }}</span>
-        </div>
-        <template v-if="sharedWithMe.length">
-          <div class="side-title" style="margin-top: 10px">来自他人的共享</div>
-          <div v-for="s in sharedWithMe" :key="s.id" class="side-item" :title="s.name"
-            @click="store.open('shared', { shareId: s.id }, { title: s.name, icon: 'share' })">
-            <AppIcon name="share2" :size="16" />
-            <span style="flex: 1">{{ s.name }}</span>
-            <span style="font-size: 10px; color: var(--text-3)">{{ s.perm === 'rw' ? '可写' : '只读' }}</span>
-          </div>
-        </template>
       </div>
 
       <!-- 主区：此电脑视图 -->
       <div v-if="!currentPolicy" style="flex: 1; overflow: auto; padding: 14px 22px">
-        <div class="sec-title">共享 ({{ sharedWithMe.length }})</div>
-        <div class="drive-grid">
-          <div class="drive-card" :class="{ sel: selectedDrive === -1 }" @click="selectedDrive = -1"
-            @dblclick="openSharedDrive">
-            <AppIcon name="share2" :size="54" />
-            <div style="flex: 1; min-width: 0">
-              <div class="drive-name">共享</div>
-              <div class="drive-bar"><div class="drive-bar-fill" style="width: 3%"></div></div>
-              <div class="drive-sub">{{ sharedWithMe.length ? `来自他人的共享 ${sharedWithMe.length} 项` : '暂无来自他人的共享' }}</div>
-            </div>
-          </div>
-        </div>
         <template v-if="localPolicies.length">
           <div class="sec-title">设备和驱动器 ({{ localPolicies.length }})</div>
           <div class="drive-grid">
@@ -232,21 +190,18 @@
           <button class="btn" @click="openItem(selItem)">打开</button>
           <button class="btn" @click="downloadSel">下载</button>
         </div>
-        <div class="pp-actions" v-if="!onSharedDrive">
+        <div class="pp-actions">
           <button class="btn" @click="renameSel" :disabled="readOnly">重命名</button>
           <button v-if="canSharePub" class="btn" @click="shareSel">分享</button>
         </div>
-        <div class="pp-actions" v-if="!onSharedDrive && !session.isGuest">
+        <div class="pp-actions">
           <button class="btn" @click="toggleStar(selItem)">{{ selItem.starred ? '取消收藏' : '收藏' }}</button>
-        </div>
-        <div class="pp-actions" v-if="onSharedDrive && currentShare">
-          <span style="font-size: 12px; color: var(--text-3)">来自 {{ currentShare.owner }}（{{ currentShare.ownerName }}）· {{ currentShare.perm === 'rw' ? '可写共享' : '只读共享' }}</span>
         </div>
       </div>
     </div>
 
     <div class="statusbar">
-      <span>{{ currentPolicy ? (onSharedDrive ? sharedStatusPath : currentPolicy.name + path) : '此电脑' }}</span>
+      <span>{{ currentPolicy ? currentPolicy.name + path : '此电脑' }}</span>
       <span v-if="currentPolicy">{{ items.length }} 个项目</span>
       <span v-if="selPaths.length">已选中 {{ selPaths.length }} 项</span>
       <span style="flex: 1"></span>
@@ -255,7 +210,6 @@
 
     <input ref="fileInput" type="file" multiple style="display: none" @change="onFilePicked" />
     <input ref="folderInput" type="file" webkitdirectory style="display: none" @change="onFilePicked" />
-    <input ref="sharedFileInput" type="file" multiple style="display: none" @change="onSharedFilePicked" />
 
     <!-- 分享对话框 -->
     <div class="dialog-mask" v-if="shareShow" @click.self="shareShow = false">
@@ -380,47 +334,6 @@
       </div>
     </div>
 
-    <!-- 站内共享对话框：可选 指定用户 / 用户组 / 所有人 -->
-    <div class="dialog-mask" v-if="usShow" @click.self="usShow = false">
-      <div class="dialog">
-        <h3>共享「{{ usTarget?.name }}」</h3>
-        <div class="row">
-          <label>共享范围</label>
-          <div style="display: flex; gap: 18px">
-            <label style="display: flex; align-items: center; gap: 6px"><input type="radio" value="user" v-model="usTargetType" />指定用户</label>
-            <label style="display: flex; align-items: center; gap: 6px"><input type="radio" value="group" v-model="usTargetType" />用户组</label>
-            <label style="display: flex; align-items: center; gap: 6px"><input type="radio" value="all" v-model="usTargetType" />所有人</label>
-          </div>
-        </div>
-        <div class="row" v-if="usTargetType === 'user'">
-          <label>选择用户</label>
-          <select class="input" v-model.number="usTargetUser" style="width: 100%">
-            <option v-for="u in usUsers" :key="u.id" :value="u.id">{{ u.nickname }}（{{ u.username }}）</option>
-          </select>
-        </div>
-        <div class="row" v-if="usTargetType === 'group'">
-          <label>选择用户组</label>
-          <select class="input" v-model.number="usTargetGroup" style="width: 100%">
-            <option v-for="g in usGroups" :key="g.id" :value="g.id">{{ g.name }}</option>
-          </select>
-        </div>
-        <div class="row" v-if="usTargetType === 'all'">
-          <label style="font-size: 12px; color: var(--text-3)">所有注册账号（含以后注册者）都能在「共享」中看到该目录</label>
-        </div>
-        <div class="row">
-          <label>权限</label>
-          <div style="display: flex; gap: 18px">
-            <label style="display: flex; align-items: center; gap: 6px"><input type="radio" value="ro" v-model="usPerm" />只读</label>
-            <label style="display: flex; align-items: center; gap: 6px"><input type="radio" value="rw" v-model="usPerm" />可写（上传/新建/删除）</label>
-          </div>
-        </div>
-        <div class="actions">
-          <button class="btn" @click="usShow = false">取消</button>
-          <button class="btn primary" @click="doUserShare">共享</button>
-        </div>
-      </div>
-    </div>
-
     <!-- 离线下载对话框 -->
     <div class="dialog-mask" v-if="odShow" @click.self="odShow = false">
       <div class="dialog" style="width: 480px">
@@ -539,7 +452,6 @@ import { rawUrl, downloadUrl } from '../api/modules'
 import { get as aget, post as apost, del as adel } from '../api/http'
 import { useContextMenu } from '../stores/ui'
 import { useUiDialog, useToast } from '../stores/dialog'
-import { userShareApi } from '../api/modules'
 import { collectDropFiles } from '../utils/drop'
 import { createEncryptedShare } from '../utils/shareEncrypt'
 import { copyText } from '../utils/clipboard'
@@ -559,7 +471,7 @@ const ctx = useContextMenu()
 const uiDlg = useUiDialog()
 const toast = useToast()
 
-const group = computed(() => session.group || ({} as any))
+const perms = computed(() => session.perms || ({} as any))
 
 const policies = ref<Policy[]>([])
 const stars = ref<any[]>([])
@@ -623,15 +535,6 @@ function closeTab(i: number) {
 function tabTitle(t: Tab): string {
   const p = policies.value.find(x => x.id === t.policyId)
   if (!p) return '此电脑'
-  if (p.id === SHARED_POLICY) {
-    if (t.path === '/') return '共享'
-    const sp = sharedPathParse(t.path)
-    if (sp) {
-      const s = sharedWithMe.value.find((x: any) => x.id === sp.shareId)
-      return s?.name || '共享'
-    }
-    return '共享'
-  }
   if (t.path === '/') return `${p.name} (${p.letter})`
   return t.path.slice(t.path.lastIndexOf('/') + 1) || p.letter
 }
@@ -670,7 +573,7 @@ const searchInput = ref<HTMLInputElement>()
 const segs = computed(() => path.value.split('/').filter(Boolean))
 const selPaths = computed(() => Array.from(selSet.value))
 const singleZipSelected = computed(() =>
-  group.value.allowArchive && selPaths.value.length === 1 &&
+  perms.value.allowArchive && selPaths.value.length === 1 &&
   /\.(zip|tar|tar\.gz|tgz|tar\.bz2|tbz2)$/i.test(selPaths.value[0]))
 const canBack = computed(() => history.value.length > 0)
 
@@ -720,7 +623,7 @@ const selItem = computed<FileItem | null>(() => {
 
 // 是否有对话框打开（打开时屏蔽快捷键，避免误触）
 const anyDialogOpen = computed(() =>
-  renameShow.value || brShow.value || shareShow.value || propShow.value || dlShow.value || usShow.value || odShow.value)
+  renameShow.value || brShow.value || shareShow.value || propShow.value || dlShow.value || odShow.value)
 
 // 当前焦点是否在“文本输入类”控件上（此时应放行浏览器原生快捷键，如搜索框内 Ctrl+A 选中文本）
 function isTextEntry(el: Element | null): boolean {
@@ -769,74 +672,27 @@ function onKey(e: KeyboardEvent) {
   if (e.altKey && k === 'ArrowRight') { e.preventDefault(); fwd(); return }
 }
 
-// 共享虚拟盘：policyId=-1。根目录 = 共享给我列表；进入某共享后走 /shared/:id/* 端点。
-// 路径编码：'/' = 共享根；'/s{id}' = 某共享根；'/s{id}/rel' = 共享内
-const SHARED_POLICY = -1
-const sharedPolicyDef: Policy = { id: SHARED_POLICY, name: '共享', letter: '', type: 'shared', rootPath: '', status: 'active', usageBytes: 0 }
-
 async function loadPolicies() {
   try {
-    const list = await fsApi.policies()
-    policies.value = [...list, sharedPolicyDef]
-  } catch { policies.value = [sharedPolicyDef] }
+    policies.value = await fsApi.policies()
+  } catch { policies.value = [] }
 }
-// 真实存储盘（不含共享虚拟盘）
-const realPolicies = computed(() => policies.value.filter(p => p.id !== SHARED_POLICY))
+// 真实存储盘
+const realPolicies = computed(() => policies.value)
 
-const sharedWithMe = ref<any[]>([])
-// 当前所在共享（共享盘内导航时有效）
-const sharedCtx = computed(() => {
-  if (currentPolicy.value?.id !== SHARED_POLICY) return null
-  const m = /^\/s(\d+)(?:\/(.*))?$/.exec(path.value)
-  if (!m) return null
-  return { shareId: Number(m[1]), rel: m[2] || '' }
-})
-const currentShare = computed(() => {
-  if (!sharedCtx.value) return null
-  return sharedWithMe.value.find((s: any) => s.id === sharedCtx.value!.shareId) || null
-})
-const sharedSegs = computed(() => sharedCtx.value?.rel ? sharedCtx.value.rel.split('/').filter(Boolean) : [])
-const onSharedDrive = computed(() => currentPolicy.value?.id === SHARED_POLICY)
-// 只读用户组（访客）：自己的盘禁止写；管理员豁免
-const readOnly = computed(() => !!group.value.readOnly && session.user?.role !== 'admin')
-// 共享盘内：仅可写共享（rw）且未处于共享根目录时可写
-const inWritableShare = computed(() => onSharedDrive.value && !!sharedCtx.value && currentShare.value?.perm === 'rw')
+// 只读用户组：自己的盘禁止写；管理员豁免
+const readOnly = computed(() => !!perms.value.readOnly && session.user?.role !== 'admin')
 const canWriteHere = computed(() => {
   if (!currentPolicy.value) return false
-  if (onSharedDrive.value) return inWritableShare.value
   return !readOnly.value
 })
 // 发起共享的资格：组允许 或 管理员（管理员豁免组限制）
-// 分享入口可见性：无权限时整体隐藏（公开分享=share 功能，站内共享=usershare 功能，另需管理员或组允许）
-const canSharePub = computed(() => (session.user?.role === 'admin' || !!group.value.allowShare) && apps.isAvailable('share'))
-const canShareUser = computed(() => (session.user?.role === 'admin' || !!group.value.allowShare) && apps.isAvailable('usershare'))
+// 分享入口可见性：无权限时整体隐藏（公开分享=share 功能）
+const canSharePub = computed(() => (session.user?.role === 'admin' || !!perms.value.allowShare) && apps.isAvailable('share'))
 const canVersion = computed(() => apps.isAvailable('version'))
-// 共享盘状态栏位置（人类可读）
-const sharedStatusPath = computed(() => {
-  if (!onSharedDrive.value) return ''
-  if (path.value === '/') return '共享'
-  const s = currentShare.value
-  const base = s ? `共享 › ${s.name}` : '共享'
-  return sharedCtx.value?.rel ? `${base} › ${sharedCtx.value.rel}` : base
-})
 
 async function loadStars() {
   try { stars.value = await fsApi.starList() } catch { stars.value = [] }
-  try { sharedWithMe.value = await userShareApi.withMe() } catch { sharedWithMe.value = [] }
-}
-
-function sharedPathParse(p: string): { shareId: number; rel: string } | null {
-  const m = /^\/s(\d+)(?:\/(.*))?$/.exec(p)
-  return m ? { shareId: Number(m[1]), rel: m[2] || '' } : null
-}
-
-function openSharedDrive() {
-  if (!activeTab.value) addTab(SHARED_POLICY, '/')
-  activeTab.value.policyId = SHARED_POLICY
-  pushHistory('/')
-  path.value = '/'
-  keyword.value = ''
-  load()
 }
 
 function openPolicy(p: Policy) { openPolicyId(p.id, '/') }
@@ -888,10 +744,6 @@ async function load() {
   searching.value = false
   selSet.value = new Set()
   try {
-    if (currentPolicy.value.id === SHARED_POLICY) {
-      await loadShared()
-      return
-    }
     const d = await fsApi.list(currentPolicy.value.id, path.value)
     items.value = d.items
     store.setTitle(props.winId, `${currentPolicy.value.name} (${currentPolicy.value.letter})${path.value === '/' ? '' : ' - ' + path.value}`)
@@ -900,49 +752,6 @@ async function load() {
     store.setTitle(props.winId, '文件资源管理器')
     if (path.value !== '/') { path.value = '/'; load() }
   } finally { loading.value = false }
-}
-
-// 共享虚拟盘加载：根 = 共享给我列表（重名附创建者区分）；内部走 /shared/:id/list
-async function loadShared() {
-  if (path.value === '/') {
-    const dup = new Map<string, number>()
-    sharedWithMe.value.forEach((s: any) => dup.set(s.name, (dup.get(s.name) || 0) + 1))
-    items.value = sharedWithMe.value.map((s: any) => ({
-      name: (dup.get(s.name) || 0) > 1 ? `${s.name}（${s.ownerName}）` : s.name,
-      path: '/s' + s.id,
-      isDir: true,
-      size: 0,
-      modTime: s.createdAt ? new Date(s.createdAt).getTime() : 0,
-      ext: '',
-      shareId: s.id,
-      shareOwner: s.owner,
-      sharePerm: s.perm
-    }))
-    store.setTitle(props.winId, '共享')
-    return
-  }
-  const c = sharedCtx.value
-  if (!c) { items.value = []; return }
-  try {
-    const d = await userShareApi.list(c.shareId, c.rel)
-    items.value = d.items.map((it: any) => ({
-      name: it.name,
-      path: `/s${c.shareId}/${it.relPath}`,
-      isDir: it.isDir,
-      size: it.size,
-      modTime: it.modTime,
-      ext: it.ext,
-      shareId: c.shareId,
-      shareOwner: currentShare.value?.owner,
-      sharePerm: d.perm
-    }))
-    store.setTitle(props.winId, `共享 - ${currentShare.value?.name || ''}${c.rel ? ' - ' + c.rel : ''}`)
-  } catch {
-    // 共享被取消/失效：回落到共享根
-    items.value = []
-    path.value = '/'
-    loadShared()
-  }
 }
 
 function refresh() {
@@ -958,7 +767,6 @@ const searching = ref(false)
 // 搜索竞态防护：快速输入时丢弃过期响应
 let searchSeq = 0
 async function doSearch() {
-  if (onSharedDrive.value) { toast.error('共享盘暂不支持搜索'); keyword.value = ''; return }
   if (!keyword.value) { load(); return }
   const seq = ++searchSeq
   loading.value = true
@@ -1036,31 +844,7 @@ function toggleAll() {
 }
 
 // ---- 打开 ----
-// 共享盘内打开：目录=进入；Office=内置编辑器（共享源）；图片/媒体/PDF=raw 内嵌；其余=下载
-function openSharedItem(f: any) {
-  if (f.isDir) { goto(f.path); return }
-  const sp = sharedPathParse(f.path)
-  if (!sp) return
-  const ext = (f.ext || '').toLowerCase()
-  if (OFFICE_EXTS.includes(ext)) {
-    // 配置了 Document Server：整页编辑器（Cloudreve 模式，完整功能区）；PDF 走内嵌查看；未配置回退桌面窗口
-    if (session.site.officeConfigured && ext !== 'pdf') {
-      router.push(`/office?shareId=${sp.shareId}&rel=${encodeURIComponent(sp.rel)}`)
-    } else {
-      store.open('officeeditor', {
-        shareId: sp.shareId, rel: sp.rel, name: f.name, size: f.size, ext,
-        perm: currentShare.value?.perm || 'ro'
-      }, { title: f.name + ' - Office', icon: 'office', w: 1100, h: 720 })
-    }
-    return
-  }
-  const previewExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'mp4', 'webm', 'mkv', 'mov', 'mp3', 'wav', 'ogg', 'flac', 'm4a', 'pdf']
-  if (previewExts.includes(ext)) window.open(userShareApi.rawUrl(sp.shareId, sp.rel))
-  else window.open(userShareApi.dlUrl(sp.shareId, sp.rel))
-}
-
 async function openItem(f: FileItem) {
-  if (onSharedDrive.value) { openSharedItem(f); return }
   const ext = (f.ext || '').toLowerCase()
   const pid = (f as any).policyId || currentPolicy.value?.id || 0
   if (!pid) return
@@ -1106,12 +890,7 @@ async function pollEditing() {
   const files = sortedItems.value.filter(f => !f.isDir && EDIT_EXTS.includes(f.ext || ''))
   if (!files.length) { editing.value = {}; return }
   try {
-    const items = files.map(f => {
-      const sp = onSharedDrive.value ? sharedPathParse(f.path) : null
-      return sp
-        ? { key: f.path, shareId: sp.shareId, rel: sp.rel }
-        : { key: f.path, policyId: currentPolicy.value?.id, path: f.path }
-    })
+    const items = files.map(f => ({ key: f.path, policyId: currentPolicy.value?.id, path: f.path }))
     const r = await officeApi.statusBatch(items)
     const out: Record<string, string> = {}
     for (const f of files) {
@@ -1141,21 +920,14 @@ function openWith(f: FileItem, app: 'imageviewer' | 'mediaviewer' | 'notepad' | 
   if (app === 'imageviewer') withList.list = siblings.filter(x => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'].includes(x.ext))
   else if (app === 'mediaviewer') withList.list = siblings.filter(x => ['mp4', 'webm', 'mkv', 'mov', 'mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(x.ext))
   else if (app === 'officeeditor') {
-    // 列表项自身不带 policyId/shareId（双击走 openItem 会用当前盘回退，这里直接展开 f 会丢字段
-    // → 编辑器 rawUrl(policyId=undefined) 报错「无法在线预览」），统一补齐
-    if (onSharedDrive.value) {
-      const sp = sharedPathParse(f.path)
-      if (sp) { withList.shareId = sp.shareId; withList.rel = sp.rel; withList.perm = currentShare.value?.perm || 'ro' }
-    } else if (!withList.policyId) {
+    // 列表项自身不带 policyId（f 来自 fs/list，仅含 path）；直接展开 f 会丢字段
+    // → 编辑器 rawUrl(policyId=undefined) 报错「无法在线预览」，统一补齐
+    if (!withList.policyId) {
       withList.policyId = pid
     }
     // 配置了 Document Server：与双击一致进整页 ONLYOFFICE 编辑器（Cloudreve 模式）；
     // 桌面窗口静态兜底仅在未配置 DS 时使用
     if (session.site.officeConfigured && ext !== 'pdf') {
-      if (onSharedDrive.value) {
-        const sp = sharedPathParse(f.path)
-        if (sp) { router.push(`/office?shareId=${sp.shareId}&rel=${encodeURIComponent(sp.rel)}`); return }
-      }
       if (pid) { router.push(`/office?policyId=${pid}&path=${encodeURIComponent(f.path)}`); return }
     }
   }
@@ -1215,8 +987,6 @@ function onItemDrag(f: FileItem, e: DragEvent) {
   e.dataTransfer.effectAllowed = 'move'
 }
 function isThumb(f: FileItem) {
-  // 共享虚拟盘无真实 policyId，缩略图走 /shared/:id/raw 由 onerror 兜底，这里直接回退图标
-  if (currentPolicy.value?.id === SHARED_POLICY) return false
   return !f.isDir && !!currentPolicy.value && IMG_EXTS.includes((f.ext || '').toLowerCase())
 }
 function thumbUrl(f: FileItem) {
@@ -1226,7 +996,7 @@ function thumbUrl(f: FileItem) {
 
 // ---- 新建（Windows 习惯：立即创建默认名并进入重命名；仅本地磁盘/文件夹内） ----
 async function newItem(kind: 'folder' | 'text') {
-  if (!currentPolicy.value || onSharedDrive.value || readOnly.value) return
+  if (!currentPolicy.value || readOnly.value) return
   const base = kind === 'folder' ? '新建文件夹' : '新建文本文档.txt'
   const names = new Set(items.value.map(x => x.name))
   let final = base
@@ -1262,7 +1032,7 @@ function uploadMenu(e: MouseEvent) {
 // 把文件加入后台上传队列并自动弹出传输面板
 function startUpload(files: File[]) {
   if (!currentPolicy.value || !files.length) return
-  if (onSharedDrive.value || readOnly.value) return
+  if (readOnly.value) return
   const pid = currentPolicy.value.id
   const parent = path.value
   transfer.addFiles(pid, parent, files)
@@ -1310,55 +1080,9 @@ async function droppedFiles(e: DragEvent): Promise<File[]> {
   for (const d of r.files) (d.file as any).__cpRel = d.rel
   return r.files.map(d => d.file)
 }
-// 共享盘（可写共享）内的上传：走 /shared/:id/upload 直传（扁平，与 SharedBrowser 一致）
-async function sharedUploadFiles(files: File[]) {
-  const c = sharedCtx.value
-  if (!c || !files.length) return
-  for (const f of files) {
-    await userShareApi.upload(c.shareId, c.rel, f)
-  }
-  toast.success('上传完成')
-  load()
-}
-const sharedFileInput = ref<HTMLInputElement>()
-function sharedPickFiles() {
-  if (!inWritableShare.value) return
-  sharedFileInput.value?.click()
-}
-async function onSharedFilePicked(e: Event) {
-  const input = e.target as HTMLInputElement
-  if (input.files?.length) {
-    try { await sharedUploadFiles(Array.from(input.files)) } catch (err: any) { toast.error(err.message) }
-  }
-  input.value = ''
-}
-// 共享盘内可写共享的新建（仅文件夹，共享上传接口不支持文本文件）
-async function sharedMkdir(rel: string) {
-  const name = await uiDlg.prompt('新建文件夹', '新建文件夹', '创建')
-  if (!name) return
-  const c = sharedCtx.value
-  if (!c) return
-  try {
-    await userShareApi.mkdir(c.shareId, rel, name)
-    load()
-  } catch (e: any) { toast.error(e.message) }
-}
-function sharedNewMenu(e: MouseEvent) {
-  if (!inWritableShare.value) return
-  ctx.show(e.clientX, e.clientY + 6, [
-    { label: '文件夹', icon: 'folder', onClick: () => sharedMkdir(sharedCtx.value!.rel) }
-  ])
-}
 async function onDrop(e: DragEvent) {
   if (!currentPolicy.value || !e.dataTransfer) return
   if (e.dataTransfer.files.length || e.dataTransfer.items?.length) {
-    if (onSharedDrive.value) {
-      if (!inWritableShare.value) { toast.error('此共享为只读，不能上传'); return }
-      const r = await collectDropFiles(e.dataTransfer)
-      if (r.problems.length) toast.error(`部分拖入内容读取失败：${r.problems[0]}`)
-      try { await sharedUploadFiles(r.files.map(d => d.file)) } catch (err: any) { toast.error(err.message) }
-      return
-    }
     if (readOnly.value) { toast.error('该用户组为只读，仅可查看和下载'); return }
     const files = await droppedFiles(e)
     if (files.length) startUpload(files)
@@ -1372,34 +1096,20 @@ async function onDropTo(f: FileItem, e: DragEvent) {
   if (!currentPolicy.value || !e.dataTransfer) return
   if (e.dataTransfer.files.length || e.dataTransfer.items?.length) {
     if (readOnly.value) { toast.error('该用户组为只读，仅可查看和下载'); return }
-    if (onSharedDrive.value) {
-      // 可写共享：拖入共享文件夹 → /shared/:id/upload（扁平上传，与共享应用一致）
-      if (!inWritableShare.value || !f.isDir) { toast.error('此共享为只读，不能上传'); return }
-      const sp = sharedPathParse(f.path)
-      if (!sp) return
-      const r = await collectDropFiles(e.dataTransfer)
-      if (r.problems.length) toast.error(`部分拖入内容读取失败：${r.problems[0]}`)
-      try {
-        for (const d of r.files) await userShareApi.upload(sp.shareId, sp.rel, d.file)
-        toast.success(`已上传 ${r.files.length} 个文件到「${f.name}」`)
-        load()
-      } catch (err: any) { toast.error(err.message) }
-      return
-    }
     // 外部文件/文件夹拖入文件夹 → 上传到该文件夹（保留目录结构）
     const files = await droppedFiles(e)
     if (!files.length) return
     transfer.addFiles(currentPolicy.value.id, f.path, files)
     transfer.panel(true)
     toast.success(`已加入 ${files.length} 个文件到「${f.name}」`)
-  } else if (f.isDir && !onSharedDrive.value) {
-    // 内部拖拽移动：把一个文件拖到文件夹内（共享盘内不支持内部移动）
+  } else if (f.isDir) {
+    // 内部拖拽移动：把一个文件拖到文件夹内
     const src = e.dataTransfer.getData('application/x-cp-path')
     if (src && src !== f.path) startInternalMove([src], f.path)
   }
 }
 async function startInternalMove(paths: string[], dstDir: string) {
-  if (!currentPolicy.value || onSharedDrive.value || readOnly.value) return
+  if (!currentPolicy.value || readOnly.value) return
   try {
     await fsApi.move(currentPolicy.value.id, paths, dstDir)
     toast.success(`已移动 ${paths.length} 项`)
@@ -1408,14 +1118,6 @@ async function startInternalMove(paths: string[], dstDir: string) {
 }
 function downloadSel() {
   if (!currentPolicy.value || !selPaths.value.length) return
-  if (onSharedDrive.value) {
-    // 共享盘：逐项走 /shared/:id/download（目录自动 zip）
-    for (const p of selPaths.value) {
-      const sp = sharedPathParse(p)
-      if (sp) window.open(userShareApi.dlUrl(sp.shareId, sp.rel))
-    }
-    return
-  }
   const a = document.createElement('a')
   a.href = downloadUrl(currentPolicy.value.id, selPaths.value)
   a.click()
@@ -1455,7 +1157,7 @@ const renameShow = ref(false)
 const renameVal = ref('')
 const renameTarget = ref('')
 function renameSel() {
-  if (selPaths.value.length !== 1 || onSharedDrive.value || readOnly.value) return
+  if (selPaths.value.length !== 1 || readOnly.value) return
   renameTarget.value = selPaths.value[0]
   renameVal.value = baseName(renameTarget.value)
   renameShow.value = true
@@ -1470,23 +1172,6 @@ async function doRename() {
 }
 async function deleteSel() {
   if (!currentPolicy.value || !selPaths.value.length) return
-  if (onSharedDrive.value) {
-    // 共享盘删除 = 从创建者的存储删除（物理删除，不可还原）
-    const ok = await uiDlg.confirm('删除', `将删除选中 ${selPaths.value.length} 项？文件将从创建者的存储中删除，不可还原。`, { danger: true, okText: '删除' })
-    if (!ok) return
-    try {
-      const byShare = new Map<number, string[]>()
-      for (const p of selPaths.value) {
-        const sp = sharedPathParse(p)
-        if (!sp) continue
-        if (!byShare.has(sp.shareId)) byShare.set(sp.shareId, [])
-        byShare.get(sp.shareId)!.push(sp.rel)
-      }
-      for (const [sid, rels] of byShare) await userShareApi.del(sid, rels)
-      load()
-    } catch (e: any) { toast.error(e.message) }
-    return
-  }
   if (readOnly.value) { toast.error('该用户组为只读，仅可查看和下载'); return }
   const ok = await uiDlg.confirm('删除', `将删除选中 ${selPaths.value.length} 项？可在回收站还原。`, { danger: true, okText: '删除' })
   if (!ok) return
@@ -1652,48 +1337,6 @@ function odStatus(s: string) {
   return ({ queued: '排队中', processing: '下载中', finished: '完成', error: '失败', canceled: '已取消' } as any)[s] || s
 }
 
-// ---- 站内共享（目标：指定用户 / 用户组 / 所有人）----
-const usShow = ref(false)
-const usTarget = ref<FileItem | null>(null)
-const usUsers = ref<any[]>([])
-const usGroups = ref<{ id: number; name: string }[]>([])
-const usTargetType = ref<'user' | 'group' | 'all'>('user')
-const usTargetUser = ref(0)
-const usTargetGroup = ref(0)
-const usPerm = ref('ro')
-async function shareUserSel() {
-  if (selPaths.value.length !== 1) return
-  if (onSharedDrive.value) { toast.error('共享盘内不能再次共享'); return }
-  const f = items.value.find(i => i.path === selPaths.value[0])
-  if (!f || !f.isDir) { toast.error('只能共享文件夹'); return }
-  usTarget.value = f
-  try {
-    const [users, groups] = await Promise.all([userShareApi.users(), userShareApi.groups()])
-    usUsers.value = (users as any[]).filter((u: any) => u.id !== session.user?.id)
-    usGroups.value = groups
-  } catch { usUsers.value = []; usGroups.value = [] }
-  usTargetType.value = 'user'
-  usTargetUser.value = usUsers.value[0]?.id || 0
-  usTargetGroup.value = usGroups.value[0]?.id || 0
-  usPerm.value = 'ro'
-  usShow.value = true
-}
-async function doUserShare() {
-  if (!currentPolicy.value || !usTarget.value || onSharedDrive.value) return
-  if (usTargetType.value === 'user' && !usTargetUser.value) { toast.error('请选择用户'); return }
-  if (usTargetType.value === 'group' && !usTargetGroup.value) { toast.error('请选择用户组'); return }
-  try {
-    await userShareApi.create({
-      policyId: currentPolicy.value.id, path: usTarget.value.path,
-      targetType: usTargetType.value,
-      targetId: usTargetType.value === 'all' ? 0 : (usTargetType.value === 'group' ? usTargetGroup.value : usTargetUser.value),
-      perm: usPerm.value
-    })
-    toast.success('共享成功，对方登录后可在「共享」中看到该目录')
-    usShow.value = false
-  } catch (e: any) { toast.error(e.message) }
-}
-
 // ---- 分享 ----
 const shareShow = ref(false)
 const shareTarget = ref<FileItem | null>(null)
@@ -1709,7 +1352,6 @@ const encBusy = ref(false)
 const encProgress = ref('')
 function shareSel() {
   if (selPaths.value.length !== 1) return
-  if (onSharedDrive.value) { toast.error('共享盘内不能创建分享链接'); return }
   shareTarget.value = items.value.find(i => i.path === selPaths.value[0]) || null
   sharePwd.value = ''; shareExpire.value = 0; shareMaxDl.value = 0; shareLink.value = ''
   shareEnc.value = false; encBusy.value = false; encProgress.value = ''
@@ -1909,7 +1551,6 @@ function onBlankCtx(e: MouseEvent) {
     ])
     return
   }
-  const shared = onSharedDrive.value
   const blankMenu: any[] = [
     {
       label: '查看', icon: 'grid', children: [
@@ -1928,66 +1569,38 @@ function onBlankCtx(e: MouseEvent) {
     { label: '刷新', icon: 'refresh', onClick: refresh },
     { separator: true }
   ]
-  if (shared) {
-    if (inWritableShare.value) {
-      blankMenu.push(
-        { label: '新建文件夹', icon: 'folder', onClick: () => sharedMkdir(sharedCtx.value!.rel) },
-        { label: '上传文件…', icon: 'upload', onClick: sharedPickFiles },
-        { separator: true }
-      )
-    }
-  } else {
-    blankMenu.push(
-      { label: '粘贴', icon: 'paste', onClick: pasteSel, disabled: !clip.mode || readOnly.value },
-      { separator: true },
+  blankMenu.push(
+    { label: '粘贴', icon: 'paste', onClick: pasteSel, disabled: !clip.mode || readOnly.value },
+    { separator: true },
+    {
+      label: '新建', icon: 'plus', disabled: readOnly.value, children: [
+        { label: '文件夹', icon: 'folder', onClick: () => newItem('folder') },
+        { label: '文本文档', icon: 'notepad', onClick: () => newItem('text') }
+      ]
+    },
+    {
+      label: '上传', icon: 'upload', disabled: readOnly.value, children: [
+        { label: '上传文件…', icon: 'upload', onClick: pickFiles },
+        { label: '上传文件夹…', icon: 'folder', onClick: pickFolder }
+      ]
+    },
+    ...(canOffline.value ? [
+      { label: '离线下载到此', icon: 'cloud', onClick: offlineDlg }
+    ] : []),
+    ...(canTerminal.value ? [
       {
-        label: '新建', icon: 'plus', disabled: readOnly.value, children: [
-          { label: '文件夹', icon: 'folder', onClick: () => newItem('folder') },
-          { label: '文本文档', icon: 'notepad', onClick: () => newItem('text') }
-        ]
-      },
-      {
-        label: '上传', icon: 'upload', disabled: readOnly.value, children: [
-          { label: '上传文件…', icon: 'upload', onClick: pickFiles },
-          { label: '上传文件夹…', icon: 'folder', onClick: pickFolder }
-        ]
-      },
-      ...(canOffline.value ? [
-        { label: '离线下载到此', icon: 'cloud', onClick: offlineDlg }
-      ] : []),
-      ...(canTerminal.value ? [
-        {
-          label: '在终端中打开', icon: 'terminal',
-          onClick: () => store.open('terminal', { policyId: currentPolicy.value!.id, path: path.value }, { title: '终端' })
-        }
-      ] : []),
-      { separator: true },
-      { label: '属性', icon: 'info', onClick: () => showProps(path.value) }
-    )
-  }
+        label: '在终端中打开', icon: 'terminal',
+        onClick: () => store.open('terminal', { policyId: currentPolicy.value!.id, path: path.value }, { title: '终端' })
+      }
+    ] : []),
+    { separator: true },
+    { label: '属性', icon: 'info', onClick: () => showProps(path.value) }
+  )
   ctx.show(e.clientX, e.clientY, blankMenu)
 }
 function onItemCtx(f: FileItem, e: MouseEvent) {
   onItemDown(f, e)
   const starred = !!f.starred
-  const shared = onSharedDrive.value
-  // 共享盘内：只保留 打开/路径/下载（+ 可写共享的 新建/上传/删除）
-  if (shared) {
-    const menu: any[] = [
-      { label: f.isDir ? '打开' : '预览/打开', icon: 'fwd', onClick: () => openItem(f) },
-      { label: '复制路径', icon: 'link', onClick: () => copyPath(f.path) },
-      { label: f.isDir ? '下载 (zip)' : '下载', icon: 'download', onClick: downloadSel }
-    ]
-    if (inWritableShare.value) {
-      menu.push(
-        { separator: true },
-        ...(f.isDir ? [{ label: '新建文件夹', icon: 'folder', onClick: () => sharedMkdir(sharedPathParse(f.path)?.rel || '') }] : []),
-        { label: '删除', icon: 'trash', danger: true, onClick: deleteSel }
-      )
-    }
-    ctx.show(e.clientX, e.clientY, menu)
-    return
-  }
 
   if (selPaths.value.length > 1) {
     // 多选（Windows：只保留批量操作）
@@ -1997,7 +1610,7 @@ function onItemCtx(f: FileItem, e: MouseEvent) {
       { label: '复制', icon: 'copy', onClick: copySel, disabled: readOnly.value },
       { separator: true },
       // 「压缩」功能被组禁用时整体隐藏（不再显示禁用态）
-      ...(group.value.allowArchive ? [{ label: '压缩打包', icon: 'archive', onClick: archiveSel, disabled: readOnly.value }] : []),
+      ...(perms.value.allowArchive ? [{ label: '压缩打包', icon: 'archive', onClick: archiveSel, disabled: readOnly.value }] : []),
       { label: '删除', icon: 'trash', danger: true, onClick: deleteSel, disabled: readOnly.value },
       { separator: true },
       { label: '属性', icon: 'info', onClick: () => showProps(selPaths.value[0]) }
@@ -2011,17 +1624,15 @@ function onItemCtx(f: FileItem, e: MouseEvent) {
       { label: '复制路径', icon: 'link', onClick: () => copyPath(f.path) },
       { label: '下载 (zip)', icon: 'download', onClick: downloadSel },
       ...(canSharePub.value ? [{ label: '分享', icon: 'share2', onClick: shareSel }] : []),
-      ...(canShareUser.value ? [{ label: '共享…', icon: 'user', onClick: shareUserSel }] : []),
       { separator: true },
-      // 游客为共享账号：收藏是共享状态，入口隐藏（后端 GuestReadOnly 兜底）
-      ...(session.isGuest ? [] : [{ label: starred ? '取消收藏' : '收藏到快速访问', icon: starred ? 'star' : 'starFill', onClick: () => toggleStar(f) }]),
+      { label: starred ? '取消收藏' : '收藏到快速访问', icon: starred ? 'star' : 'starFill', onClick: () => toggleStar(f) },
       { label: '剪切', icon: 'cut', onClick: cutSel, disabled: readOnly.value },
       { label: '复制', icon: 'copy', onClick: copySel, disabled: readOnly.value },
       { label: '粘贴到内部', icon: 'paste', onClick: pasteInto(f), disabled: !clip.mode || readOnly.value },
       { label: '重命名', icon: 'rename', onClick: renameSel, disabled: readOnly.value },
       { separator: true },
       // 「压缩」功能被组禁用时整体隐藏（不再显示禁用态）
-      ...(group.value.allowArchive ? [{ label: '压缩打包', icon: 'archive', onClick: archiveSel, disabled: readOnly.value }] : []),
+      ...(perms.value.allowArchive ? [{ label: '压缩打包', icon: 'archive', onClick: archiveSel, disabled: readOnly.value }] : []),
       { label: '删除', icon: 'trash', danger: true, onClick: deleteSel, disabled: readOnly.value },
       { separator: true },
       { label: '属性', icon: 'info', onClick: () => showProps(f.path) }
@@ -2037,16 +1648,16 @@ function onItemCtx(f: FileItem, e: MouseEvent) {
     ...(canSharePub.value ? [{ label: '分享', icon: 'share', onClick: shareSel }] : []),
     { label: '提取直链', icon: 'link', onClick: dlinkSel },
     { separator: true },
-    ...(session.isGuest ? [] : [{ label: starred ? '取消收藏' : '收藏到快速访问', icon: starred ? 'star' : 'starFill', onClick: () => toggleStar(f) }]),
+    { label: starred ? '取消收藏' : '收藏到快速访问', icon: starred ? 'star' : 'starFill', onClick: () => toggleStar(f) },
     { label: '剪切', icon: 'cut', onClick: cutSel, disabled: readOnly.value },
     { label: '复制', icon: 'copy', onClick: copySel, disabled: readOnly.value },
     { label: '重命名', icon: 'rename', onClick: renameSel, disabled: readOnly.value },
     { separator: true },
     ...(f.ext?.toLowerCase() === 'zip' || /\.(tar|tgz|tbz2|gz)$/i.test(f.name || '')
-      ? (group.value.allowArchive ? [{ label: '解压到当前目录', icon: 'archive', onClick: extractSel, disabled: readOnly.value }] : [])
+      ? (perms.value.allowArchive ? [{ label: '解压到当前目录', icon: 'archive', onClick: extractSel, disabled: readOnly.value }] : [])
       : []),
     // 「压缩」功能被组禁用时整体隐藏（不再显示禁用态）
-    ...(group.value.allowArchive ? [{ label: '压缩打包', icon: 'archive', onClick: archiveSel, disabled: readOnly.value }] : []),
+    ...(perms.value.allowArchive ? [{ label: '压缩打包', icon: 'archive', onClick: archiveSel, disabled: readOnly.value }] : []),
     { label: '删除', icon: 'trash', danger: true, onClick: deleteSel, disabled: readOnly.value },
     { separator: true },
     { label: '属性', icon: 'info', onClick: () => showProps(f.path) }
@@ -2145,14 +1756,6 @@ function fmtTime(ms: number) {
   justify-content: center; cursor: pointer; color: var(--text-3); flex: none;
 }
 .exp-tab-add:hover { background: var(--hover-b); color: var(--text); }
-
-/* 游客临时空间提示条 */
-.guest-ttl-bar {
-  display: flex; align-items: center; gap: 6px; padding: 4px 12px; flex: none;
-  font-size: 12px; color: var(--text-2);
-  background: var(--hover-b); border-bottom: 1px solid var(--stroke-b);
-}
-.guest-ttl-bar :deep(svg) { color: var(--accent, var(--text-2)); flex: none; }
 
 .side-title { font-size: 11.5px; color: var(--text-3); padding: 8px 10px 4px; }
 .side-item {

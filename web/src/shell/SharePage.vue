@@ -149,7 +149,8 @@ async function loadSiteTheme() {
     const r: any = (await api.get('/site/public')).data
     officeReady.value = !!r.data?.officeConfigured
     const th = r.data?.theme
-    if (th === 'win12' || th === 'macos' || th === 'deepin') {
+    // 单用户私有部署只有 win12 一种主题
+    if (th === 'win12') {
       siteTheme.value = th
       const el = document.documentElement
       for (const t of availableThemes()) el.classList.remove(t.rootClass)

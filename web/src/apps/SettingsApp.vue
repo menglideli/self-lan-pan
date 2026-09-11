@@ -44,47 +44,36 @@
             <div class="avatar" style="width: 72px; height: 72px; font-size: 30px">{{ initial }}</div>
             <div>
               <div style="font-size: 17px">{{ session.user?.nickname }}</div>
-              <div style="font-size: 12.5px; color: var(--text-3)">@{{ session.user?.username }} · {{ session.group?.name }}</div>
+              <div style="font-size: 12.5px; color: var(--text-3)">@{{ session.user?.username }} · {{ session.perms?.name }}</div>
               <div style="font-size: 12.5px; color: var(--text-3)">
-                已用 {{ fmt(session.user?.usedBytes || 0) }} / {{ session.group?.quotaMB && session.group.quotaMB > 0 ? session.group.quotaMB + ' MB' : '不限量' }}
+                已用 {{ fmt(session.user?.usedBytes || 0) }} / {{ session.perms?.quotaMB && session.perms.quotaMB > 0 ? session.perms.quotaMB + ' MB' : '不限量' }}
               </div>
             </div>
           </div>
-          <!-- 游客为 24 小时临时工作区身份（全体访客共用一个账号），不提供昵称/密码/WebDAV 自管理入口 -->
-          <div v-if="session.isGuest" class="form-row">
-            <label>临时空间说明</label>
-            <div style="font-size: 13px; color: var(--text-3); max-width: 560px; line-height: 1.7">
-              当前为游客临时空间身份：所有访客共用同一账号，可以上传文件、离线下载、在线编辑与预览
-              Office / PDF / 图片；文件会在 24 小时后自动清除，请及时下载重要内容。
-              账号管理（修改昵称/密码等）不适用，如需长期保存请使用账号登录。
+          <div class="form-row">
+            <label>昵称</label>
+            <input class="input" v-model="nickname" style="width: 260px" />
+            <button class="btn" @click="saveProfile">保存</button>
+          </div>
+          <div class="form-row" style="margin-top: 22px">
+            <label>修改密码</label>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap">
+              <input class="input" type="password" v-model="oldPwd" placeholder="原密码" style="width: 180px" />
+              <input class="input" type="password" v-model="newPwd" placeholder="新密码（至少6位）" style="width: 180px" />
+              <button class="btn" @click="doChangePwd">修改密码</button>
             </div>
           </div>
-          <template v-else>
-            <div class="form-row">
-              <label>昵称</label>
-              <input class="input" v-model="nickname" style="width: 260px" />
-              <button class="btn" @click="saveProfile">保存</button>
+          <div class="form-row" style="margin-top: 22px">
+            <label>WebDAV 独立密码（用于挂载到 Windows 资源管理器 / 手机）</label>
+            <div style="display: flex; gap: 8px">
+              <input class="input" v-model="davPwd" placeholder="设置/重置 WebDAV 密码" style="width: 260px" />
+              <button class="btn" @click="doDavPwd">保存</button>
             </div>
-            <div class="form-row" style="margin-top: 22px">
-              <label>修改密码</label>
-              <div style="display: flex; gap: 8px; flex-wrap: wrap">
-                <input class="input" type="password" v-model="oldPwd" placeholder="原密码" style="width: 180px" />
-                <input class="input" type="password" v-model="newPwd" placeholder="新密码（至少6位）" style="width: 180px" />
-                <button class="btn" @click="doChangePwd">修改密码</button>
-              </div>
+            <div v-if="session.perms?.allowWebdav" style="font-size: 12px; color: var(--text-3); margin-top: 6px">
+              挂载地址：http://你的服务器地址/dav/ （根目录直接列出已挂载的本机文件夹）
             </div>
-            <div class="form-row" style="margin-top: 22px">
-              <label>WebDAV 独立密码（用于挂载到 Windows 资源管理器）</label>
-              <div style="display: flex; gap: 8px">
-                <input class="input" v-model="davPwd" placeholder="设置/重置 WebDAV 密码" style="width: 260px" />
-                <button class="btn" @click="doDavPwd">保存</button>
-              </div>
-              <div v-if="session.group && session.group.allowWebdav" style="font-size: 12px; color: var(--text-3); margin-top: 6px">
-                挂载地址：http://你的服务器地址/dav/{{ session.user?.username }}
-              </div>
-              <div v-else style="font-size: 12px; color: var(--text-3); margin-top: 6px">当前用户组未启用 WebDAV</div>
-            </div>
-          </template>
+            <div v-else style="font-size: 12px; color: var(--text-3); margin-top: 6px">WebDAV 未启用</div>
+          </div>
         </template>
 
         <!-- 共享管理 -->
@@ -107,20 +96,6 @@
             </tbody>
           </table>
           <div v-if="!shares.length" style="color: var(--text-3); padding: 16px; text-align: center">暂无外链分享</div>
-          <div class="ac-sub" style="margin-top: 24px">共享给用户</div>
-          <table class="file-list" style="position: static">
-            <thead><tr><th>目录</th><th>共享给</th><th>权限</th><th>时间</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="s in userShares" :key="s.id">
-                <td>{{ s.name }}</td>
-                <td>{{ s.owner }}（{{ s.ownerName }}）</td>
-                <td><span class="tag" :class="{ admin: s.perm === 'rw' }">{{ s.perm === 'rw' ? '可写' : '只读' }}</span></td>
-                <td>{{ new Date(s.createdAt).toLocaleDateString() }}</td>
-                <td><button class="tool-btn danger" style="padding: 3px 8px" @click="cancelUserShare(s)">取消共享</button></td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-if="!userShares.length" style="color: var(--text-3); padding: 16px; text-align: center">在资源管理器中右键文件夹 →「共享给用户」即可创建</div>
         </template>
 
         <!-- 离线下载 -->
@@ -180,7 +155,7 @@ import { useSession } from '../stores/session'
 import { canUseOffline } from '../stores/apps'
 import { wallpaperClass } from '../assets/wallpapers'
 import { availableThemes, resolveTheme } from '../themes/registry'
-import { fsApi, shareApi, authApi, userShareApi } from '../api/modules'
+import { fsApi, shareApi, authApi } from '../api/modules'
 import { get as aget, post as apost, del as adel } from '../api/http'
 import { useToast, useUiDialog } from '../stores/dialog'
 import { copyText } from '../utils/clipboard'
@@ -253,21 +228,12 @@ const initial = computed(() => (session.user?.nickname || 'C').charAt(0).toUpper
 
 onMounted(() => {
   loadShares()
-  loadUserShares()
   loadOffline()
   pollTimer = window.setInterval(() => { if (tab.value === 'offline') loadOffline() }, 3000)
 })
 onBeforeUnmount(() => clearInterval(pollTimer))
 async function loadShares() {
   try { shares.value = await shareApi.mine() } catch {}
-}
-const userShares = ref<any[]>([])
-async function loadUserShares() {
-  try { userShares.value = await userShareApi.mine() } catch {}
-}
-async function cancelUserShare(s: any) {
-  if (!(await uiDlg.confirm('取消共享', `取消共享「${s.name}」？对方将立即失去访问权限。`, { danger: true, okText: '取消共享' }))) return
-  try { await userShareApi.cancel(s.id); loadUserShares() } catch (e: any) { toast.error(e.message) }
 }
 async function saveProfile() {
   try { await authApi.updateMe({ nickname: nickname.value }); await session.loadMe() } catch (e: any) { alert(e.message) }

@@ -18,7 +18,7 @@
 
 ## 构建与验证环境（踩过坑）
 - 本机 Go 1.26.3，`go.mod` 要 1.27.0：必须 `export GOPROXY=https://goproxy.cn,direct`（**勿设 `GOSUMDB=off`**，会导致工具链校验失败）。`proxy.golang.org` 不可达。
-- `server/internal/web/dist/.keep` 已就位，后端可单独 `go build ./...`（`go:embed all:dist` 需要该目录非空）。
+- `server/internal/web/dist/.keep` 已就位，后端可单独 `go build ./...`（`go:embed all:dist` 需要该目录非空）。`build.bat` 会先 `rmdir` 整个 dist 再 xcopy，**所以它必须自己重建 `.keep`**（批次 7 补上；`build.sh` 本就有 `touch .keep`）。
 - 本机 **Bash 工具的 PATH 完全失效**（`ls` / `dirname` / `cat` 全 command not found）。一律改用 PowerShell / Read / Grep / Glob。
 - PowerShell 5.1 处理中文文件会写坏编码；批量改代码用 Node 脚本或 `[System.IO.File]` API。
 - 端到端验证套路：`CP_DATA=<临时目录> CP_PORT=<临时端口> ./cloudpan.exe` → 从启动日志抓"初始管理员密码" → 登录拿 token → `POST /api/admin/policies` 建本地挂载 → 重启触发启动期任务 → 查磁盘。
@@ -28,6 +28,9 @@
 - **两种错误报告形态别混**：业务错误走 `dto.Fail(c, 400, msg)` = **HTTP 200 + body `{code:400}`**；只有"路由不存在/中间件拦截"才真的改 HTTP 状态码（`dto.FailHTTP`）。写断言时业务错误查 `r.json.code`，别查 `r.status`。
 - **写进 `evalOr` 模板字符串里的正则要双反斜杠，写在 Node 侧的要单反斜杠**——多转义一层会让正则永远匹配不上，断言"恒为真"地空转却一直 PASS。这类空转只能靠反向变异验证抓出来。
 - **同一文件并行下发多个 Edit 会丢改动**（工具报成功，但部分写入被并发读-改-写覆盖）。同一文件的多次编辑必须串行下发，改完用 Grep/Read 复核。
+- **`.bat` 里不要写新的中文**（批次 7 实测炸过）：`build.bat`/`start.bat` 是 **UTF-8 无 BOM**，cmd 按系统 ANSI（GBK）代码页读取；中文字节被 GBK 解读后可能凑出 `&`/`|`/`>` 等元字符，直接把命令行打断。现象是构建 0.2 秒 `BUILD FAILED` + `'ist' 不是内部或外部命令`（`dist` 被截断）。新增/修改的脚本内容一律用 ASCII 英文。
+- **PowerShell 工具禁止直接调 `cmd.exe`**（"cmd.exe cannot be used from the PowerShell tool"）。要跑 `.bat` 用 Node `spawn('cmd.exe', ['/c','build.bat'])`——`%TEMP%\cp-verify2\run-build.mjs`（跑 build.bat 并自检产物）与 `run-start.mjs`（跑 start.bat + taskkill）就是这么干的。
+- **跑 `start.bat` 会在仓库里建真实 `server/data`**（它 `cd /d "%~dp0server"` 且不设 `CP_DATA`），即建出一个真实 admin 账号；密码只在那一瞬的日志里，用户没看到，下次启动又不会重印 → 直接进不去。**验证完必须删掉整个 `server/data`**（先确认 `CreationTime` 就是验证时刻），或先重定向 `CP_DATA` 到临时目录。
 
 ## 已知高危耦合（改动前必读）
 1. ~~本地盘按用户子目录隔离~~ —— **已于批次 1 关闭**（`main.go`、`handler/webdav.go` 的 join 与 `fscore.UserDirOf` 均已删除）。
@@ -45,8 +48,8 @@
 ## 已锁定的改造决策（2026-09-11 用户拍板）
 登录页只留密码框；文件管理器不要盘符、根视图直接列挂载点；挂载入口放文件管理器内（后端需新增目录浏览接口）；手机先走 WebDAV；公开分享暂留；**用户组 / 权限模型彻底删除、权限写死为管理员全开**（配额不限；`RecycleRetentionDays: 0` = 回收站永久保留，系统不再有任何"按时间自动物理删用户文件"的行为）。
 
-## 与上游 README 的偏差（以代码为准）
-README 描述的功能面大于实际裁剪目标。**核对功能时不要拿 README 当事实**——批次 4 落地后 README 必须重写。
+## README 状态（批次 7 已重写，勿再拿旧描述当事实）
+README 已于批次 7 按当前功能面重写（双语）：删掉整章《在线 Office（ONLYOFFICE）部署指南》，顶部介绍 / 功能特性 / 快速开始 / 目录结构 / 部署加固全部重写，截图由 25 张（三主题 + 含已删界面）换成当前状态实拍 5 张（登录页 / 桌面 / 根视图 / 挂载对话框 / 挂载点内容，由 `ui.mjs` 真实动线产出）。**《云盘接入与扫码绑定》与历史 changelog 原样保留**——后者开头有「范围说明」交代"其中描述的能力在本分支多已裁剪"。另外：Go 版本要求已从 `1.22+` 更正为 **`1.27+`**（`go.mod` 是 `go 1.27.0`）。核对功能仍以代码为准。
 
 ## 当前进度
 - 2026-09-11：项目审计，产出 `docs/单用户私有化改造计划.md`（v2 定稿，7 个批次）。
@@ -58,5 +61,7 @@ README 描述的功能面大于实际裁剪目标。**核对功能时不要拿 R
 - 批次 5 ✅ `687325b`：文件管理器根视图改「已挂载的文件夹」（文件夹图标 + 名称 + 本机目录 + 已用空间），侧栏 / 标签 / 窗口标题 / 面包屑全部去掉盘符；全局搜索徽标改为挂载点名；根视图右键新增「挂载文件夹…/编辑此挂载/卸载」。
 - 批次 6 ✅ `687325b`：新增「挂载文件夹」——后端 `GET /api/admin/fs/dirs` 列本机目录（仅管理员、无白名单）、`letter` 自动生成、本地挂载要求目录已存在；前端 Explorer 内嵌浏览式目录选择器（面包屑 / 上一级 / 点击进入），AdminConsole 去掉「虚拟盘符」输入与盘符列。
 - 验证：`smoke.mjs` **60/60**、`ui.mjs` **22/22**、反向变异验证通过（把 `(letter)` 加回标签 → ui 如期 FAIL）。
-- 待做：**批次 7**（全链路 `build.bat` 构建 + 冒烟 + 重写 README）。可选：手机端前端（暂缓，先 WebDAV）。
-- 收尾动作：批次 7 之前记得检查 `docs/单用户私有化改造计划.md` 是否还有"待做"标记；README 必须重写（当前描述的功能面大于实际，见上文）。
+- 批次 7 ✅：全链路 `build.bat` 通过（exit 0 / `BUILD OK` / 24.7s / exe 61 MB / 嵌入 **134** 个 dist 条目）；用**构建产物本身**跑 `smoke.mjs` **60/60**、`ui.mjs` **22/22**；`start.bat` 语法与首部署日志验证通过；README 按当前功能面重写完成（见上节）。
+- **全部 7 个批次已完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 是批次 7 的验证记录）。
+- 批次 7 顺手修掉的真问题：① `build.bat` 不重建 `.keep`（先 `rmdir` 整个 dist）→ 空克隆后 `go:embed` 会失败，已补 `type nul > dist\.keep`；② README 的 Go 版本要求写着 `1.22+`（实际 `go.mod` 要 1.27.0）→ 更正为 `1.27+`；③ `start.bat` 注释还写着"默认账号 admin / admin123"（实际首部署是随机密码）→ 已改。
+- 待办（未做，非阻塞）：手机端前端（暂缓，先走 WebDAV）；`docs/test-evidence/` 是上游测试证据存档（含 guest / 终端的旧截图），README 已不引用，可择机清理。

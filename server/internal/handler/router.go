@@ -153,12 +153,7 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		ag.GET("/settings", ad.SettingsGet)
 		ag.PUT("/settings", ad.SettingsSet)
 
-		// 系统版本更新（检查/下载/自重启/历史）
-		upd := &UpdateHandler{Site: site}
-		ag.GET("/update/check", upd.Check)
-		ag.POST("/update/start", upd.Start)
-		ag.GET("/update/status", upd.Status)
-		ag.GET("/update/history", upd.History)
+		// 单用户私有部署：系统自更新端点已删除（二进制由部署者自行替换）
 
 		ag.GET("/logs", ad.LogList)
 		ag.GET("/logs/export", ad.LogExport)

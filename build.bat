@@ -1,5 +1,7 @@
 @echo off
-rem CloudPan 一键构建：前端 -> 嵌入 -> 单 exe
+rem CloudPan one-click build: frontend -> embed -> single exe
+rem NOTE: keep every comment in this file ASCII-only. cmd.exe may decode this
+rem file as GBK; a UTF-8 Chinese comment byte can eat the following line.
 setlocal
 set "PATH=%PATH%;C:\Program Files\nodejs;C:\Program Files\Go\bin"
 cd /d "%~dp0"

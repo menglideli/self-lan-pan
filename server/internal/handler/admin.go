@@ -57,6 +57,8 @@ func (h *AdminHandler) PolicyList(c *gin.Context) {
 			"id": p.ID, "name": p.Name, "letter": p.Letter, "type": p.Type,
 			"rootPath": p.RootPath, "options": p.Opts(), "status": p.Status,
 			"statusMsg": p.StatusMsg, "usageBytes": p.UsageBytes, "createdAt": p.CreatedAt,
+			// WebDAV 路径由后端算（路径段 = 挂载名，重名去重），前端只负责展示，避免两处规则各写一遍
+			"davPath": davPathOf(p.ID),
 		})
 	}
 	dto.OK(c, out)

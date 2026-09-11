@@ -69,8 +69,12 @@
               <input class="input" v-model="davPwd" placeholder="设置/重置 WebDAV 密码" style="width: 260px" />
               <button class="btn" @click="doDavPwd">保存</button>
             </div>
-            <div v-if="session.perms?.allowWebdav" style="font-size: 12px; color: var(--text-3); margin-top: 6px">
-              挂载地址：http://你的服务器地址/dav/ （根目录直接列出已挂载的本机文件夹）
+            <div v-if="session.perms?.allowWebdav" style="font-size: 12px; color: var(--text-3); margin-top: 6px; line-height: 1.9">
+              挂载地址：<b style="color: var(--text-2)">{{ davUrl }}</b>
+              <button class="btn" style="padding: 2px 8px; margin-left: 4px" @click="copyDavUrl">复制</button>
+              <br>
+              这一个地址就是全部挂载（不用一个个加）；只想单独挂某一个用 {{ davUrl }}&lt;挂载名&gt;/<br>
+              登录用网页账号 + 上面这个密码
             </div>
             <div v-else style="font-size: 12px; color: var(--text-3); margin-top: 6px">WebDAV 未启用</div>
           </div>
@@ -243,6 +247,11 @@ async function doChangePwd() {
 }
 async function doDavPwd() {
   try { await authApi.setWebdavPassword(davPwd.value); toast.success('WebDAV 密码已设置'); davPwd.value = '' } catch (e: any) { toast.error(e.message) }
+}
+// WebDAV 统一入口：按当前访问地址推算，省得用户自己拼服务器地址
+const davUrl = computed(() => location.origin + '/dav/')
+function copyDavUrl() {
+  copyText(davUrl.value).then(ok => ok ? toast.success('WebDAV 地址已复制') : toast.error('复制失败，请手动选择复制'))
 }
 function copyShare(s: any) {
   // HTTP 环境（非安全上下文）下 navigator.clipboard 不可用，copyText 内部回退 execCommand

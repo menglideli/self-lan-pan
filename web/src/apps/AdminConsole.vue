@@ -130,6 +130,10 @@
                   <td>
                     <div style="font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis" :title="p.rootPath || ''">{{ p.rootPath || p.statusMsg || '-' }}</div>
                     <div class="ac-status" :class="p.status"><span class="ac-dot" :class="{ off: p.status !== 'active' }"></span>{{ p.status === 'active' ? '正常' : p.status === 'disabled' ? '已停用' : '异常' }}</div>
+                    <div v-if="p.davPath" class="ac-status" style="color: var(--text-3); cursor: pointer"
+                         :title="'点击复制：' + davRoot + p.davPath"
+                         @click="copyDav(p.davPath)">WebDAV {{ p.davPath }}</div>
+                    <div v-else class="ac-status" style="color: var(--text-3)">云盘不经 WebDAV</div>
                   </td>
                   <td>{{ fmt(p.usageBytes) }}</td>
                   <td>
@@ -425,6 +429,7 @@ import { useSession } from '../stores/session'
 import { useAppState } from '../stores/appstate'
 import { useUiDialog, useToast } from '../stores/dialog'
 import { adminApi } from '../api/modules'
+import { copyText } from '../utils/clipboard'
 import AppIcon from '../components/AppIcon.vue'
 import QRCode from 'qrcode'
 
@@ -432,6 +437,11 @@ const session = useSession()
 const uiDlg = useUiDialog()
 const toast = useToast()
 const tab = ref('dash')
+// WebDAV 统一入口：按当前访问地址推算（挂载路径由后端下发，前端不重复实现命名规则）
+const davRoot = computed(() => location.origin)
+function copyDav(path: string) {
+  copyText(location.origin + path).then(ok => ok ? toast.success('WebDAV 地址已复制：' + path) : toast.error('复制失败，请手动选择复制'))
+}
 const tabs = computed(() => [
   { id: 'dash', name: '仪表盘', icon: 'info' },
   { id: 'policies', name: '存储策略', icon: 'drive' },

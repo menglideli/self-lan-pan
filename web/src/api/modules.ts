@@ -13,7 +13,7 @@ export interface Perms {
 }
 export interface Policy {
   id: number; name: string; letter: string; type: string; rootPath: string
-  status: string; usageBytes: number
+  status: string; usageBytes: number; davPath?: string
 }
 export interface FileItem {
   name: string; isDir: boolean; size: number; modTime: number; ext: string

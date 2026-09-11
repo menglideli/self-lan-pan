@@ -13,7 +13,9 @@
 - 路由唯一装配点：`server/internal/handler/router.go`。
 - 前端主题插件化：`themes/<id>/index.ts` 导出 `ThemeDef` → `themes/registry.ts` 登记；主题 CSS 由 registry 静态 import，删目录即自动摘除。`ThemeId` 联合类型在 `themes/types.ts`（现只剩 `'win12'`）。
 - 存储抽象：`fscore` Driver 注册表（`main.go` 注册 local/pan123/aliyun/baidu/tianyi）。**用户子目录隔离已于批次 1 关闭**，本地盘直接暴露挂载根的真实内容。
-- **挂载 = 一条 `model.Policy`（`type=local`）**。字段 `Letter` 在 UI 上已完全不显示（用户要求"不要盘符"），但**不能删**——它仍是 WebDAV 的路径段（`webdav.go` 的 `resolve()` 按 `letter` 匹配 → `/dav/<letter>/`）、列表排序键、唯一索引。前端不传 `letter` 时由 `handler/localdir.go` 的 `genPolicyLetter()` 自动生成：ASCII 优先（≤4 位），纯中文名退化为 `M`、`M1`、`M2`…
+- **挂载 = 一条 `model.Policy`（`type=local`）**。字段 `Letter` 在 UI 上已完全不显示（用户要求"不要盘符"），但**不能删**——它仍是 WebDAV 的**兼容别名路径段**（`/dav/<letter>/`）、列表排序键、唯一索引。前端不传 `letter` 时由 `handler/localdir.go` 的 `genPolicyLetter()` 自动生成：ASCII 优先（≤4 位），纯中文名退化为 `M`、`M1`、`M2`…
+- **WebDAV = 统一入口 `/dav/`（批次 9 定稿）**：`/dav/` 是**虚拟根**，PROPFIND 列出全部本机挂载（`type='local'` 且未 disabled；**云盘不纳入**），写操作一律拒绝；`/dav/<挂载名>/…` 是单挂载正式路径段；`/dav/<盘符>/…` 是兼容别名。**路径段命名规则只在后端实现**（`webdav.go` 的 `davSeg()` / `davPathOf()`），经 `PolicyList` 的 **`davPath` 字段**下发给前端展示——**改规则只改后端一处**，别在前端重写一套。
+- **系统自更新已整体删除**（批次 9）：`handler/update.go` 整文件 + 4 条 `/api/admin/update/*` 路由 + `model.UpdateLog` + `main.go` 的自重启路径都不在了。二进制由部署者手动替换。旧库残留 `update_logs` 表无害。
 - **本机目录浏览接口**：`GET /api/admin/fs/dirs`（`handler/localdir.go`，挂在 `/admin` 组 = 仅管理员）。不传 `path` 返回盘符/根列表，传 `path` 返回该目录下子目录。**按用户明确要求不设白名单，整机可翻**；两条底线是"必须绝对路径"+"必须已存在的目录"。它是文件管理器里「挂载文件夹」选择器的数据源。
 - **挂载列表变化走 `cp-policies-changed` 跨窗口广播**：管理台 `loadAll()` 对挂载列表算指纹（id/名称），变了才 `window.dispatchEvent`；`Explorer.vue` 监听后重拉 `fsApi.policies()`，当前挂载被卸载则退回根视图。**别复用 `cp-refresh-explorer`**——那个只刷"当前目录的文件列表"，不重拉挂载列表（挂载根视图不会更新）。
 - **Explorer 的导航历史是 `(policyId, path)` 二元组**（`policyId === null` = "此电脑"根视图，这是"后退能退回根视图"的唯一表达方式）。`pushHistory()` 压的是**来处**，因此必须在改 `tab.policyId` / `tab.path` **之前**调用；反过来写就会出现"后退按钮可点但点了没反应"。
@@ -32,7 +34,7 @@
 - **`el.click()` 会绕过 `pointer-events: none`**（程序化事件不做命中测试）→ 用它断言"按钮点不动"**永远 PASS**（空转）。断言渲染层行为（点不动 / 看不见 / 被遮挡）必须走 CDP `Input.dispatchMouseEvent` 打真实鼠标事件（`ui.mjs` 的 `realClick()`）。批次 8 实测：变异版本 detail = `click=true dlg=false`，只有真实鼠标点才抓得到。
 - **`#/app/<id>` 是 `StandaloneApp` 独立单应用模式**，切 hash 会**整个替换页面**（Explorer 被卸载重建）。要验证"两个窗口并存"的场景（如管理台改挂载 → 文件管理器刷新）必须走「桌面外壳 → 双击桌面图标开窗」的多窗口路径；用切 hash 的方式测，测到的其实是"窗口重建后重新拉取"，是假通过。
 - **同一文件并行下发多个 Edit 会丢改动**（工具报成功，但部分写入被并发读-改-写覆盖）。同一文件的多次编辑必须串行下发，改完用 Grep/Read 复核。
-- **`.bat` 里不要写新的中文**（批次 7 实测炸过）：`build.bat`/`start.bat` 是 **UTF-8 无 BOM**，cmd 按系统 ANSI（GBK）代码页读取；中文字节被 GBK 解读后可能凑出 `&`/`|`/`>` 等元字符，直接把命令行打断。现象是构建 0.2 秒 `BUILD FAILED` + `'ist' 不是内部或外部命令`（`dist` 被截断）。新增/修改的脚本内容一律用 ASCII 英文。
+- **`.bat` 里不要出现中文，已有中文也要清掉**（批次 7 + 批次 9 两次实测炸过）：`build.bat`/`start.bat` 是 **UTF-8 无 BOM**，cmd 按系统 ANSI（GBK）代码页读取；中文字节被 GBK 解读后可能凑出 `&`/`|`/`>` 等元字符，直接把命令行打断。现象是构建 0.2 秒 `BUILD FAILED` + `'ist' 不是内部或外部命令`（`dist` 被截断）；批次 9 的表现是**中文 `rem` 吞掉后一行**（`setlocal` 消失）+ 早段报「文件名、目录名或卷标语法不正确」。脚本内容一律 ASCII 英文。
 - **PowerShell 工具禁止直接调 `cmd.exe`**（"cmd.exe cannot be used from the PowerShell tool"）。要跑 `.bat` 用 Node `spawn('cmd.exe', ['/c','build.bat'])`——`%TEMP%\cp-verify2\run-build.mjs`（跑 build.bat 并自检产物）与 `run-start.mjs`（跑 start.bat + taskkill）就是这么干的。
 - **跑 `start.bat` 会在仓库里建真实 `server/data`**（它 `cd /d "%~dp0server"` 且不设 `CP_DATA`），即建出一个真实 admin 账号；密码只在那一瞬的日志里，用户没看到，下次启动又不会重印 → 直接进不去。**验证完必须删掉整个 `server/data`**（先确认 `CreationTime` 就是验证时刻），或先重定向 `CP_DATA` 到临时目录。
 
@@ -48,6 +50,8 @@
 8. **`Share.AllowEdit` 已删除**（`office.go` 是它唯一的读取方）。DB 的 `allow_edit` 列保留未迁移，无害；别再在前端加回「允许在线编辑」开关。
 9. **`fscore.NewLocal` 内部是 `os.MkdirAll`** —— 它对不存在的路径会**静默创建目录**然后成功返回。这曾让"挂载一个打错的路径"返回 code 0 并在磁盘上留下空目录（已实测复现）。现在 `PolicyCreate` 对 local 类型加了 `os.Stat` 预检（目录必须已存在）。**改这里时别把预检删了**，也别指望 `NewLocal` 自己会拒绝。
 10. **改 `Policy` 相关代码时注意 `letter` 的隐式约束**：空字符串在 SQLite 里是一个真实值，多个空 `letter` 会撞唯一索引。任何"清空 letter"的路径都必须先经过 `genPolicyLetter()` 或回退原值。
+11. **WebDAV 跨挂载 MOVE/COPY 必须显式拒绝**（批次 9）。`golang.org/x/net/webdav` 的 `MOVE` 在目的地已存在且 `Overwrite: T` 时是 **先 `RemoveAll` 再 `Rename`** —— 放行跨挂载就会**先删掉源盘的文件再失败**。同理统一根（`Mount == nil`）上的 `Mkdir`/`RemoveAll`/`Rename` 也一律拒绝。别以为"只是挪不动而已"。
+12. **`fscore.LocalDriver{Root}` 直接构造 vs `NewLocal()` 的区别在 webdav 里是安全边界**：`NewLocal` 内部 `os.MkdirAll` 会**静默建目录**。`webdav.go` 的 `davLocal()` 必须用直接构造（`&fscore.LocalDriver{Root: abs}`）。另外 `OpenFile` 的 `os.MkdirAll(dir)` 只能挂在 `write == true` 分支——读请求不能凭一个不存在的路径建目录。
 
 ## 已锁定的改造决策（2026-09-11 用户拍板）
 登录页只留密码框；文件管理器不要盘符、根视图直接列挂载点；挂载入口放文件管理器内（后端需新增目录浏览接口）；手机先走 WebDAV；公开分享暂留；**用户组 / 权限模型彻底删除、权限写死为管理员全开**（配额不限；`RecycleRetentionDays: 0` = 回收站永久保留，系统不再有任何"按时间自动物理删用户文件"的行为）。
@@ -68,6 +72,8 @@ README 已于批次 7 按当前功能面重写（双语）：删掉整章《在�
 - 批次 7 ✅：全链路 `build.bat` 通过（exit 0 / `BUILD OK` / 24.7s / exe 61 MB / 嵌入 **134** 个 dist 条目）；用**构建产物本身**跑 `smoke.mjs` **60/60**、`ui.mjs` **22/22**；`start.bat` 语法与首部署日志验证通过；README 按当前功能面重写完成（见上节）。
 - 批次 8 ✅ `3d8676a`：修复用户内网真机反馈的 5 个问题 —— ①空态「挂载文件夹」按钮点不动（根因：`base.css` 的 `.empty-hint` 带 `pointer-events:none`，空态里嵌的按钮被一起禁用）；②进入挂载文件夹后「后退」点了没反应（根因：`pushHistory` 压的是目标路径而非来处）；③管理台新增挂载后文件管理器不刷新（新增 `cp-policies-changed` 广播）；④删管理台「系统更新」页签及全部前端调用（**后端 `/api/admin/update/*` 路由保留**）；⑤离线下载"没下下来"（**后端本就正常**，实测 38MB / 3s 下完并落盘；真因是前端完成后不刷新目录 + 不显示失败原因）。
 - 验证：`smoke.mjs` **60/60**、`ui.mjs` **34/34**（批次 8 新增 12 项）、`probe-all.mjs`（离线下载专项，新）、**4 处反向变异全部命中**（含离线下载变异精确复现了用户现象）。
-- **全部 8 个批次已完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7 验证记录，§7.4 = 批次 8 定位/变异记录）。
+- **全部 9 个批次已完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7，§7.4 = 批次 8，§7.5 = 批次 9 验证记录）。
 - 批次 7 顺手修掉的真问题：① `build.bat` 不重建 `.keep`（先 `rmdir` 整个 dist）→ 空克隆后 `go:embed` 会失败，已补 `type nul > dist\.keep`；② README 的 Go 版本要求写着 `1.22+`（实际 `go.mod` 要 1.27.0）→ 更正为 `1.27+`；③ `start.bat` 注释还写着"默认账号 admin / admin123"（实际首部署是随机密码）→ 已改。
-- 待用户拍板（均不阻塞）：① 后端 `/api/admin/update/*` 自更新路由是否随前端页签一并删除；② 手机端 WebDAV 是否改认「挂载名」路径（现在是 `/dav/<自动生成盘符>/`）；③ `docs/test-evidence/` 上游测试证据存档（含 guest / 终端旧截图，README 已不引用）是否清理；④ 手机端前端（暂缓，先走 WebDAV）。
+- 批次 9 ✅：① 删掉系统自更新（`handler/update.go` 整文件 536 行 + 4 条路由 + `UpdateLog` + `main.go` 自重启）；② WebDAV 改为**统一入口 `/dav/`**（列全部本机挂载）+ 单挂载 `/dav/<挂载名>/` + 兼容别名 `/dav/<盘符>/`；顺手修掉 `DavAuth()` 里令 README 写的地址一律 403 的遗留前缀校验。
+- 批次 9 验证：`probe-webdav.mjs` **44/44**（新，含统一根只读/跨挂载拒绝/同名去重/401/编码）、`smoke.mjs` **60/60**、`ui.mjs` **35/35**、`build.bat` 真跑 exit 0 / 23.6 s / exe 64,166,400 B / 嵌入 119；**3 处反向变异全部命中**，其中 1 处（`davWriteFile.Close()` 临时文件残留）是首轮实测真实抓到的缺陷。
+- 待用户拍板（均不阻塞）：① `docs/test-evidence/` 上游测试证据存档（含 guest / 终端旧截图，README 已不引用）是否清理；② 媒体中心当前是 `installable`（需去应用中心装），是否改为开机即在桌面；③ 手机端前端（暂缓，先走 WebDAV）。

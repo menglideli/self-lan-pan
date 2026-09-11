@@ -367,7 +367,7 @@ func InitDB(dataDir string) {
 	// quota_mb 列首次新增时，SQLite 会把存量行填 0（=不限量），必须回填 -1（=随组）
 	quotaColNew := !DB.Migrator().HasColumn(&User{}, "quota_mb")
 	// 单用户私有化改造后不再建 user_groups / user_shares 表（用户组与站内共享已删除）
-	if err := DB.AutoMigrate(&User{}, &Policy{}, &FileHash{}, &FileHashCopy{}, &UploadSession{}, &Share{}, &RecycleItem{}, &UserStar{}, &FileVersion{}, &Task{}, &UpdateLog{}, &Notification{}, &UserSetting{}, &SiteSetting{}, &AuditLog{}, &SystemApp{}); err != nil {
+	if err := DB.AutoMigrate(&User{}, &Policy{}, &FileHash{}, &FileHashCopy{}, &UploadSession{}, &Share{}, &RecycleItem{}, &UserStar{}, &FileVersion{}, &Task{}, &Notification{}, &UserSetting{}, &SiteSetting{}, &AuditLog{}, &SystemApp{}); err != nil {
 		log.Fatalf("建表失败: %v", err)
 	}
 	// 存量秒传索引回填副本行（旧版本只有 SourcePath 单源记录）

@@ -136,7 +136,7 @@
               <img v-if="isThumb(f)" :src="thumbUrl(f)" class="f-thumb" draggable="false" />
               <AppIcon v-else :name="iconOf(f)" :size="46" />
             </div>
-            <div class="f-name"><span v-if="editing[f.path]" class="editing-dot" :title="'正在编辑：' + editing[f.path]"></span>{{ f.name }}</div>
+            <div class="f-name">{{ f.name }}</div>
           </div>
         </div>
         <div v-else class="file-list">
@@ -156,7 +156,6 @@
                 <td style="width: 34px; text-align: center"><input type="checkbox" :checked="selSet.has(f.path)" @mousedown.stop.prevent @click.stop="toggleCheck(f)" /></td>
                 <td><div style="display: flex; align-items: center; gap: 10px">
                   <AppIcon :name="iconOf(f)" :size="19" /><span>{{ f.name }}</span>
-                  <span v-if="editing[f.path]" class="editing-badge" :title="'正在编辑：' + editing[f.path]"><span class="editing-dot"></span>编辑中</span>
                   <AppIcon v-if="f.starred" name="starFill" :size="13" />
                 </div></td>
                 <td style="color: var(--text-3)">{{ fmtTime(f.modTime) }}</td>
@@ -231,17 +230,14 @@
         <div class="row" style="display: flex; gap: 18px">
           <label style="display: flex; align-items: center; gap: 6px"><input type="checkbox" v-model="shareAllowDl" />允许下载</label>
           <label style="display: flex; align-items: center; gap: 6px"><input type="checkbox" v-model="sharePreview" />允许预览</label>
-          <label style="display: flex; align-items: center; gap: 6px"><input type="checkbox" v-model="shareEdit" :disabled="shareEnc" />允许在线编辑</label>
         </div>
         <div class="row">
           <label style="display: flex; align-items: center; gap: 6px">
             <input type="checkbox" v-model="shareEnc" :disabled="encBusy" />端到端加密（E2E）
           </label>
         </div>
-        <div class="row" style="font-size: 12px; color: var(--text-3)">
-          {{ shareEnc
-            ? '端到端加密：文件在本浏览器内用提取码加密后再上传，服务端与管理员均无法查看内容；接收方需提取码才能解密（不支持在线编辑/转存）'
-            : '允许在线编辑：任何人打开分享链接即可进入 ONLYOFFICE 完整编辑器在线修改，保存自动归档旧版本（需已配置 Document Server）' }}
+        <div v-if="shareEnc" class="row" style="font-size: 12px; color: var(--text-3)">
+          端到端加密：文件在本浏览器内用提取码加密后再上传，服务端与管理员均无法查看内容；接收方需提取码才能解密（不支持在线编辑/转存）
         </div>
         <div class="row">
           <label>下载次数限制（留空不限）</label>
@@ -440,14 +436,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useWindows } from '../stores/windows'
 import { useSession } from '../stores/session'
 import { useAppState } from '../stores/appstate'
 import { canUseOffline } from '../stores/apps'
 import { useClipboard } from '../stores/ui'
 import { useTransfer } from '../stores/transfer'
-import { fsApi, shareApi, officeApi, type Policy, type FileItem } from '../api/modules'
+import { fsApi, shareApi, type Policy, type FileItem } from '../api/modules'
 import { rawUrl, downloadUrl } from '../api/modules'
 import { get as aget, post as apost, del as adel } from '../api/http'
 import { useContextMenu } from '../stores/ui'
@@ -461,7 +456,6 @@ const props = defineProps<{ winId: number; props: any }>()
 const store = useWindows()
 const session = useSession()
 const apps = useAppState()
-const router = useRouter()
 // 离线下载等无权限功能：入口整体隐藏（不显示禁用态），与「无权限功能完全隐藏」原则一致
 const canOffline = computed(() => canUseOffline())
 const clip = useClipboard()
@@ -593,12 +587,10 @@ onMounted(async () => {
   }
   window.addEventListener('cp-refresh-explorer', onRefreshEvent)
   window.addEventListener('keydown', onKey)
-  startEditPoll()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('cp-refresh-explorer', onRefreshEvent)
   window.removeEventListener('keydown', onKey)
-  if (editTimer) window.clearInterval(editTimer)
 })
 
 function onRefreshEvent(e: any) {
@@ -861,14 +853,6 @@ async function openItem(f: FileItem) {
     store.open('imageviewer', { ...p, list: siblings.filter(x => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(x.ext)) }, { title: f.name + ' - 图片查看器', icon: 'image', w: 900, h: 640 })
   } else if (['mp4', 'webm', 'mkv', 'mov', 'mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(ext)) {
     store.open('mediaviewer', { ...p, list: siblings.filter(x => ['mp4', 'webm', 'mkv', 'mov', 'mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(x.ext)) }, { title: f.name + ' - 媒体播放器', icon: 'media', w: 900, h: 620 })
-  } else if (OFFICE_EXTS.includes(ext)) {
-    // 配置了 Document Server：整页 ONLYOFFICE 编辑器（Cloudreve 模式：撑满整页 + 完整功能区，
-    // 自己账号打开与分享链接打开同一形态）；PDF 走内嵌查看；未配置回退桌面窗口静态预览
-    if (session.site.officeConfigured && ext !== 'pdf') {
-      router.push(`/office?policyId=${pid}&path=${encodeURIComponent(f.path)}`)
-    } else {
-      store.open('officeeditor', p, { title: f.name + ' - Office', icon: 'office', w: 1100, h: 720 })
-    }
   } else if (TEXT_EXTS.includes(ext) || !ext) {
     store.open('notepad', p, { title: f.name + ' - 记事本', icon: 'notepad', w: 780, h: 560 })
   } else {
@@ -876,36 +860,9 @@ async function openItem(f: FileItem) {
   }
 }
 const TEXT_EXTS = ['txt', 'md', 'json', 'js', 'ts', 'vue', 'go', 'py', 'java', 'c', 'cpp', 'h', 'css', 'html', 'xml', 'yml', 'yaml', 'sh', 'bat', 'ini', 'conf', 'log', 'csv', 'sql', 'php', 'rb', 'rs', 'toml']
-// Office 文档（含 OpenDocument/RTF，与 ONLYOFFICE Document Server 支持范围对齐；csv 默认仍走记事本）
-const OFFICE_EXTS = ['docx', 'doc', 'odt', 'rtf', 'xlsx', 'xls', 'ods', 'pptx', 'ppt', 'odp', 'pdf']
-
-// ---- 实时协作「正在编辑」徽章：30s 批量只读查询当前目录 Office 文件的协作状态 ----
-// 只读查询不把自己登记为编辑者；编辑者由整页编辑器的 20s 心跳维护（90s 无心跳视为离开）
-const editing = ref<Record<string, string>>({}) // path -> "张三、李四"
-let editTimer: number | undefined
-const EDIT_EXTS = OFFICE_EXTS.filter(x => x !== 'pdf') // pdf 不进 DS 协作
-async function pollEditing() {
-  if (!apps.isAvailable('office')) { editing.value = {}; return }
-  const files = sortedItems.value.filter(f => !f.isDir && EDIT_EXTS.includes(f.ext || ''))
-  if (!files.length) { editing.value = {}; return }
-  try {
-    const items = files.map(f => ({ key: f.path, policyId: currentPolicy.value?.id, path: f.path }))
-    const r = await officeApi.statusBatch(items)
-    const out: Record<string, string> = {}
-    for (const f of files) {
-      const names = r[f.path]?.editors?.map(e => e.name).filter(Boolean)
-      if (names?.length) out[f.path] = names.join('、')
-    }
-    editing.value = out
-  } catch { editing.value = {} }
-}
-function startEditPoll() {
-  pollEditing()
-  editTimer = window.setInterval(pollEditing, 30000)
-}
 
 // ---- 打开方式：强制用指定应用打开（覆盖默认路由） ----
-function openWith(f: FileItem, app: 'imageviewer' | 'mediaviewer' | 'notepad' | 'officeeditor') {
+function openWith(f: FileItem, app: 'imageviewer' | 'mediaviewer' | 'notepad') {
   const pid = (f as any).policyId || currentPolicy.value?.id || 0
   if (!pid) return
   const ext = (f.ext || '').toLowerCase()
@@ -918,24 +875,11 @@ function openWith(f: FileItem, app: 'imageviewer' | 'mediaviewer' | 'notepad' | 
   // 图片/媒体：传入同类文件列表（图片为全部图片，音视频为全部音视频）
   if (app === 'imageviewer') withList.list = siblings.filter(x => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'].includes(x.ext))
   else if (app === 'mediaviewer') withList.list = siblings.filter(x => ['mp4', 'webm', 'mkv', 'mov', 'mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(x.ext))
-  else if (app === 'officeeditor') {
-    // 列表项自身不带 policyId（f 来自 fs/list，仅含 path）；直接展开 f 会丢字段
-    // → 编辑器 rawUrl(policyId=undefined) 报错「无法在线预览」，统一补齐
-    if (!withList.policyId) {
-      withList.policyId = pid
-    }
-    // 配置了 Document Server：与双击一致进整页 ONLYOFFICE 编辑器（Cloudreve 模式）；
-    // 桌面窗口静态兜底仅在未配置 DS 时使用
-    if (session.site.officeConfigured && ext !== 'pdf') {
-      if (pid) { router.push(`/office?policyId=${pid}&path=${encodeURIComponent(f.path)}`); return }
-    }
-  }
   const p = withList
   const map: Record<string, { title: string; icon: string; w: number; h: number }> = {
     imageviewer: { title: f.name + ' - 图片查看器', icon: 'image', w: 880, h: 620 },
     mediaviewer: { title: f.name + ' - 媒体播放器', icon: 'media', w: 880, h: 580 },
-    notepad: { title: f.name + ' - 记事本', icon: 'notepad', w: 780, h: 560 },
-    officeeditor: { title: f.name + ' - Office', icon: 'office', w: 1100, h: 720 }
+    notepad: { title: f.name + ' - 记事本', icon: 'notepad', w: 780, h: 560 }
   }
   store.open(app, p, { title: map[app].title, icon: map[app].icon, w: map[app].w, h: map[app].h })
 }
@@ -948,8 +892,6 @@ function buildOpenWith(f: FileItem) {
     items.push({ label: '媒体播放器', icon: 'media', onClick: () => openWith(f, 'mediaviewer') })
   if (TEXT_EXTS.includes(ext) || !ext)
     items.push({ label: '记事本', icon: 'notepad', onClick: () => openWith(f, 'notepad') })
-  if (OFFICE_EXTS.includes(ext) && apps.isAvailable('office'))
-    items.push({ label: 'Office 编辑器', icon: 'office', onClick: () => openWith(f, 'officeeditor') })
   return items
 }
 
@@ -1344,7 +1286,6 @@ const shareExpire = ref(0)
 const shareMaxDl = ref<number>(0)
 const shareAllowDl = ref(true)
 const sharePreview = ref(true)
-const shareEdit = ref(true)
 const shareLink = ref('')
 const shareEnc = ref(false)
 const encBusy = ref(false)
@@ -1356,8 +1297,6 @@ function shareSel() {
   shareEnc.value = false; encBusy.value = false; encProgress.value = ''
   shareShow.value = true
 }
-// 分享对话框打开时重置在线编辑开关为默认值（允许）
-watch(shareShow, v => { if (v) shareEdit.value = true })
 async function doShare() {
   if (!currentPolicy.value || !shareTarget.value) return
   const t = shareTarget.value
@@ -1384,7 +1323,7 @@ async function doShare() {
       policyId: currentPolicy.value.id, path: t.path,
       password: sharePwd.value || undefined, expireDays: shareExpire.value,
       remainDownloads: (Number.isFinite(shareMaxDl.value) && shareMaxDl.value > 0) ? Math.floor(shareMaxDl.value) : 0,
-      allowDownload: shareAllowDl.value, previewEnabled: sharePreview.value, allowEdit: shareEdit.value
+      allowDownload: shareAllowDl.value, previewEnabled: sharePreview.value
     })
     shareLink.value = location.origin + location.pathname + '#/s/' + s.token
   } catch (e: any) {
@@ -1761,17 +1700,6 @@ function fmtTime(ms: number) {
   position: absolute; top: 6px; left: 8px; z-index: 2;
   background: linear-gradient(135deg, var(--theme-1), var(--theme-2));
   color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 8px;
-}
-/* 实时协作「正在编辑」徽章（绿点 + 悬停提示协作者名单） */
-.editing-dot {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  background: #4caf50; box-shadow: 0 0 5px rgba(76, 175, 80, 0.85);
-  vertical-align: middle;
-}
-.f-name .editing-dot { margin-right: 5px; }
-.editing-badge {
-  display: inline-flex; align-items: center; gap: 5px; flex: none;
-  font-size: 11px; color: #4caf50;
 }
 /* Win11 叠加复选框：悬停或选中时显示 */
 .f-check {

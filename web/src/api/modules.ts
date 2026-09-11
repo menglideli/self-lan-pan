@@ -30,16 +30,7 @@ export const authApi = {
 }
 
 export const siteApi = {
-  publicInfo: () => get<{ siteName: string; officeConfigured: boolean; announcement: string; theme: string; demoShare: string; standaloneApps: boolean; wallpaperCatalog: { name: string; url: string }[] }>('/site/public')
-}
-
-// 在线 Office：实时协作「正在编辑」状态
-export const officeApi = {
-  // 编辑器心跳（登录态；公开分享端点 /s/:token/office/status 为匿名同款）
-  status: (qs: string) => get<any>(`/office/status?${qs}`),
-  // 文件列表批量只读查询：不把查看者登记为编辑者
-  statusBatch: (items: { key: string; policyId?: number; path?: string; shareId?: number; rel?: string }[]) =>
-    post<Record<string, { editors: { name: string; mode: string }[]; modTime: number }>>('/office/status-batch', items)
+  publicInfo: () => get<{ siteName: string; announcement: string; theme: string; demoShare: string; standaloneApps: boolean; wallpaperCatalog: { name: string; url: string }[] }>('/site/public')
 }
 
 export const notifyApi = {
@@ -80,7 +71,7 @@ export const fsApi = {
 }
 
 export const shareApi = {
-  create: (d: { policyId: number; path: string; password?: string; expireDays?: number; remainDownloads?: number; allowDownload?: boolean; previewEnabled?: boolean; allowEdit?: boolean }) => post<any>('/shares', d),
+  create: (d: { policyId: number; path: string; password?: string; expireDays?: number; remainDownloads?: number; allowDownload?: boolean; previewEnabled?: boolean }) => post<any>('/shares', d),
   mine: () => get<any[]>('/shares'),
   cancel: (id: number) => del(`/shares/${id}`),
   // 转存：把公开分享内容一键保存到自己账号（登录态；带提取码需 st）
@@ -118,10 +109,6 @@ export const adminApi = {
   shares: (page = 1, size = 50, keyword = '') => get<any>(`/admin/shares?page=${page}&size=${size}&keyword=${encodeURIComponent(keyword)}`),
   shareDelete: (id: number) => del(`/admin/shares/${id}`),
   appToggle: (key: string, enabled: boolean) => post(`/admin/apps/${key}/toggle`, { enabled }),
-  officeTest: (url?: string) => post<{ ok: boolean; msg: string }>(url ? `/admin/office-test?url=${encodeURIComponent(url)}` : '/admin/office-test'),
-  // 多 Document Server（健康检查 + 故障切换）
-  officeDses: () => get<any>('/admin/office-dses'),
-  officeDsesSave: (list: { name: string; url: string; jwt: string; priority: number }[]) => post<any>('/admin/office-dses', list),
   // 系统更新
   updateCheck: () => get<any>('/admin/update/check'),
   updateStart: () => post<any>('/admin/update/start'),

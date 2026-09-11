@@ -9,15 +9,11 @@
             <div style="font-size: 12px; color: var(--text-3); margin-top: 3px">
               {{ info.owner }} 分享{{ !info.isDir && info.size ? ' · ' + fmt(info.size) : '' }}{{ info.expiresAt ? ' · ' + new Date(info.expiresAt).toLocaleDateString() + ' 到期' : '' }}
               · {{ info.views || 0 }} 次浏览 · {{ info.downloads || 0 }} 次下载
-              <span v-if="!info.isDir && editing['']" class="share-editing" :title="'当前还有协作者在线编辑：' + editing['']"><span class="share-editing-dot"></span>正在编辑：{{ editing[''] }}</span>
             </div>
           </div>
           <button class="btn" v-if="authed && !info.encrypted" :disabled="saveBusy" @click="openSaveDlg()"
             :title="!info.isDir && isTextFile(info.name) ? '保存到自己的网盘，可用记事本打开继续编辑' : '一键保存到自己的网盘'">
             <AppIcon name="cloud" :size="15" /> {{ !info.isDir && isTextFile(info.name) ? '存到我的记事本' : '保存到网盘' }}
-          </button>
-          <button class="btn" v-if="!info.isDir && !info.encrypted && officeReady && OFFICE_DS_EXTS.includes(extOf(info.name))" @click="openOfficeEditor('')" title="ONLYOFFICE 在线编辑器（可编辑保存）">
-            <AppIcon name="office" :size="15" /> 在线打开
           </button>
           <button class="btn" v-if="!info.isDir && isTextFile(info.name)" @click="openTextViewer('', info.name)" title="在线阅读文本/Markdown">
             <AppIcon name="edit" :size="15" /> 在线阅读
@@ -49,13 +45,10 @@
               <tr v-for="f in items" :key="f.relPath" style="cursor: pointer"
                 @click="openItem(f)" @dblclick="openItem(f)">
                 <td style="width: 40px; padding: 8px 14px"><AppIcon :name="iconOf(f)" :size="20" /></td>
-                <td style="padding: 8px 6px">{{ f.name }}
-                  <span v-if="editing[f.relPath]" class="share-editing" :title="'正在编辑：' + editing[f.relPath]"><span class="share-editing-dot"></span>编辑中</span>
-                </td>
+                <td style="padding: 8px 6px">{{ f.name }}</td>
                 <td style="width: 110px; color: var(--text-3); padding: 8px 14px">{{ f.isDir ? '-' : fmt(f.size) }}</td>
                 <td style="width: 90px; padding: 8px 14px; color: var(--text-3)">
-                  <button v-if="!info.encrypted && officeReady && OFFICE_DS_EXTS.includes(f.ext)" class="tool-btn" style="padding: 3px 8px" @click.stop="openItem(f)">打开</button>
-                  <button v-else-if="isTextFile(f.name)" class="tool-btn" style="padding: 3px 8px" @click.stop="openItem(f)">阅读</button>
+                  <button v-if="isTextFile(f.name)" class="tool-btn" style="padding: 3px 8px" @click.stop="openItem(f)">阅读</button>
                   <button v-else-if="info.allowDownload" class="tool-btn" style="padding: 3px 8px" @click.stop="downloadItem(f)">下载</button>
                   <button v-else-if="info.previewEnabled && canPreview(f)" class="tool-btn" style="padding: 3px 8px" @click.stop="openItem(f)">预览</button>
                 </td>
@@ -122,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 import AppIcon from '../components/AppIcon.vue'
@@ -140,14 +133,9 @@ const wpClass = computed(() => {
   return wallpaperClass(t.wallpapers.some(w => w.key === key) ? key! : t.defaultWallpaper)
 })
 
-// 站点是否配置了 ONLYOFFICE Document Server（公开接口 /site/public 提供）：
-// 配置后分享页 Office 文件直接进整页在线编辑器（Cloudreve 分享模式）
-const officeReady = ref(false)
-
 async function loadSiteTheme() {
   try {
     const r: any = (await api.get('/site/public')).data
-    officeReady.value = !!r.data?.officeConfigured
     const th = r.data?.theme
     // 单用户私有部署只有 win12 一种主题
     if (th === 'win12') {
@@ -257,14 +245,10 @@ onMounted(async () => {
     const r: any = (await api.get(`/s/${token}/info`)).data
     if (r.code !== 0) throw new Error(r.msg)
     info.value = r.data
-    if (!r.data.hasPassword) { verified.value = true; await loadList(); startEditPoll() }
+    if (!r.data.hasPassword) { verified.value = true; await loadList() }
   } catch (e: any) {
     errMsg.value = e.message || '分享不存在或已过期'
   }
-})
-
-onBeforeUnmount(() => {
-  if (editTimer) window.clearInterval(editTimer)
 })
 
 async function verify() {
@@ -275,7 +259,6 @@ async function verify() {
     stoken.value = r.data.stoken
     verified.value = true
     await loadList()
-    startEditPoll()
   } catch (e: any) { errMsg.value = e.message }
 }
 
@@ -286,13 +269,6 @@ async function loadList() {
     if (r.code !== 0) throw new Error(r.msg)
     items.value = r.data
   } catch (e: any) { errMsg.value = e.message }
-}
-
-// Office 文档进整页在线编辑器（Cloudreve 分享模式：任何人打开分享链接都能在线编辑）；
-// 单文件分享的 rel 为空（分享文件本身）
-const OFFICE_DS_EXTS = ['docx', 'doc', 'odt', 'rtf', 'xlsx', 'xls', 'ods', 'pptx', 'ppt', 'odp']
-function openOfficeEditor(rel: string) {
-  location.hash = `/s/${token}/office?path=${encodeURIComponent(rel)}&st=${encodeURIComponent(stoken.value)}`
 }
 
 // ---- 文本/Markdown 在线阅读（.md 渲染 Markdown、.txt 原文；B2-1 记事本在线分享）----
@@ -338,15 +314,13 @@ async function openTextViewer(rel: string, name: string) {
 }
 
 async function openItem(f: any) {
-  // relPath 恒为「相对分享根」的路径（后端 RelTo(分享根, 全路径)），直接用于 raw/office/阅读器
+  // relPath 恒为「相对分享根」的路径（后端 RelTo(分享根, 全路径)），直接用于 raw/阅读器
   if (f.isDir) {
     currentRel.value = f.relPath
     loadInto(f.relPath)
   } else {
     const rel = f.relPath
-    if (!info.value.encrypted && OFFICE_DS_EXTS.includes(f.ext)) {
-      openOfficeEditor(rel)
-    } else if (isTextFile(f.name)) {
+    if (isTextFile(f.name)) {
       openTextViewer(rel, f.name)
     } else if (info.value.previewEnabled && canPreview(f)) {
       if (info.value.encrypted) {
@@ -370,36 +344,6 @@ async function loadInto(rel: string) {
     if (r.code !== 0) throw new Error(r.msg)
     items.value = r.data
   } catch (e: any) { errMsg.value = e.message }
-}
-
-// ---- 实时协作「正在编辑」：25s 轮询（匿名端点；目录分享最多查前 10 个 Office 文件）----
-const editing = ref<Record<string, string>>({}) // relPath(''=分享文件本身) -> "访客、访客"
-const sessID = Math.random().toString(36).slice(2, 12)
-let editTimer: number | undefined
-async function pollEditing() {
-  if (!officeReady.value || !verified.value) { editing.value = {}; return }
-  const files = info.value.isDir
-    ? items.value.filter((f: any) => !f.isDir && OFFICE_DS_EXTS.includes(f.ext)).slice(0, 10)
-    : (OFFICE_DS_EXTS.includes(extOf(info.value.name || '')) ? [{ relPath: '' }] : [])
-  if (!files.length) { editing.value = {}; return }
-  const out: Record<string, string> = {}
-  await Promise.all(files.map(async (f: any) => {
-    try {
-      const r: any = (await api.get(`/s/${token}/office/status`, {
-        params: { path: f.relPath || '', st: stoken.value, sess: sessID }
-      })).data
-      if (r.code === 0) {
-        const names = (r.data.editors || []).filter((e: any) => !e.me).map((e: any) => e.name)
-        if (names.length) out[f.relPath || ''] = names.join('、')
-      }
-    } catch { /* 忽略 */ }
-  }))
-  editing.value = out
-}
-function startEditPoll() {
-  if (editTimer) window.clearInterval(editTimer)
-  pollEditing()
-  editTimer = window.setInterval(pollEditing, 25000)
 }
 
 function downloadCurrent() {
@@ -466,15 +410,6 @@ function fmt(n: number) {
 </script>
 
 <style scoped>
-/* 实时协作「正在编辑」徽章 */
-.share-editing {
-  display: inline-flex; align-items: center; gap: 5px;
-  color: #4caf50; margin-left: 8px; white-space: nowrap;
-}
-.share-editing-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: #4caf50; box-shadow: 0 0 5px rgba(76, 175, 80, 0.85);
-}
 /* 文本/Markdown 在线阅读视图 */
 .txt-view {
   margin: 0; font-size: 13px; line-height: 1.7;

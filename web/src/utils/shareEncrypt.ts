@@ -64,7 +64,6 @@ export async function createEncryptedShare(
     remainDownloads: 0,
     allowDownload: extra.allowDownload ?? true,
     previewEnabled: extra.previewEnabled ?? true,
-    allowEdit: false,
     encrypted: true, encSalt: salt
   })
   const files = await collectFiles(plan)

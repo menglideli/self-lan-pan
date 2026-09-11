@@ -79,7 +79,6 @@ func (h *SiteHandler) PublicInfo(c *gin.Context) {
 	}
 	dto.OK(c, gin.H{
 		"siteName":         s["site_name"],
-		"officeConfigured": activeDS() != nil,               // 多 DS 列表优先，回退单 DS 设置
 		"standaloneApps":   s["standalone_apps"] != "false", // 独立应用模式（#/app/:app）开关，默认开
 		"announcement":     s["announcement"],
 		"theme":            theme,
@@ -870,7 +869,7 @@ func (h *SiteHandler) WriteText(c *gin.Context) {
 	if !checkQuota(c, x, add) {
 		return
 	}
-	// 版本管理：目标文件已存在时，覆盖前归档旧版本（与上传/Office 覆盖路径一致）
+	// 版本管理：目标文件已存在时，覆盖前归档旧版本（与上传覆盖路径一致）
 	if p.Type == "local" {
 		if phys, err := fscore.PhysicalOf(d, vp); err == nil {
 			fscore.SaveVersion(in.PolicyID, x.user.ID, vp, phys)

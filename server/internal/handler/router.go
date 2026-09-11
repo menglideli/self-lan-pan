@@ -35,20 +35,6 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		sg.GET("/raw", sh.Raw)
 	}
 
-	// 公开分享链接的在线 Office 编辑器配置（匿名，Cloudreve 分享模式：任何人打开分享链接可进 ONLYOFFICE 编辑器）。
-	// 双重功能门控（share+office 均启用才放行，防止单开关被绕）；独立限流防爆刷签发
-	officePubLimiter := middleware.NewIPRateLimiter(30, 10) // 30 次/分钟，突发 10
-	officePub := &OfficeHandler{Site: site, Secret: cfg.Secret}
-	api.GET("/s/:token/office",
-		middleware.AppGate("share"), middleware.AppGate("office"),
-		middleware.RateLimit(officePubLimiter),
-		officePub.ConfigShare)
-	// 分享链接的「正在编辑」协作状态（匿名，与编辑器配置同门控同限流）
-	api.GET("/s/:token/office/status",
-		middleware.AppGate("share"), middleware.AppGate("office"),
-		middleware.RateLimit(officePubLimiter),
-		officePub.StatusShare)
-
 	// 需登录
 	ug := api.Group("", middleware.Auth(cfg.Secret))
 	{
@@ -108,13 +94,6 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		// 转存：公开分享内容一键保存到自己账号（登录态）
 		ug.POST("/s/:token/save", sh.SaveToDrive)
 
-		// ONLYOFFICE（受「在线 Office」功能门控）
-		office := &OfficeHandler{Site: site}
-		ug.GET("/office/config", middleware.AppGate("office"), office.Config)
-		// 实时协作「正在编辑」状态：编辑器心跳 + 文件列表批量只读查询
-		ug.GET("/office/status", middleware.AppGate("office"), office.Status)
-		ug.POST("/office/status-batch", middleware.AppGate("office"), office.StatusBatch)
-
 		// 云盘授权（管理员专属：涉及云盘凭据绑定/token 交换，普通用户无权限操作存储策略）
 		ca := &CloudAuth{Site: site}
 		ug.GET("/cloud/auth-url", middleware.AdminOnly(), ca.AuthURL)
@@ -141,10 +120,6 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		ug.GET("/apps", site.AppList)
 
 	}
-
-	// ONLYOFFICE 服务端回调（无 JWT，用签名 token 鉴权；受「在线 Office」功能门控）
-	api.GET("/office/file", middleware.AppGate("office"), (&OfficeHandler{Site: site}).File)
-	api.POST("/office/callback", middleware.AppGate("office"), (&OfficeHandler{Site: site}).Callback)
 
 	// 云盘 OAuth 回调（公开路由：厂商把用户浏览器重定向回这里，此时浏览器未必登录本系统；
 	// 安全靠 HMAC 签名 state 而非登录态——state 绑定策略 ID/类型/回调地址，30 分钟过期）
@@ -183,10 +158,6 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		ag.GET("/update/status", upd.Status)
 		ag.GET("/update/history", upd.History)
 
-		ag.POST("/office-test", (&OfficeHandler{Site: site}).Health)
-		// 多 Document Server：列表 + 健康状态 / 保存（保存后立即探测一次）
-		ag.GET("/office-dses", (&OfficeHandler{Site: site}).DSEndpoint)
-		ag.POST("/office-dses", (&OfficeHandler{Site: site}).DSSave)
 		ag.GET("/logs", ad.LogList)
 		ag.GET("/logs/export", ad.LogExport)
 		ag.GET("/notifications", ad.NotificationList)

@@ -1,10 +1,8 @@
 package middleware
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -12,100 +10,31 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"cloudpan/internal/dto"
-	"cloudpan/internal/model"
 )
 
-// dsOrigins 读取站点配置的 ONLYOFFICE 文档服务器 origin 列表（scheme://host，可多台）。
-// 多 DS 列表（onlyoffice_dses）优先，回退单 DS 设置（onlyoffice_url）。
-// 站点设置变更最多 10 秒后生效（下方 TTL 缓存）。
-func dsOrigins() []string {
-	var rows []model.SiteSetting
-	model.DB.Where("key IN ?", []string{"onlyoffice_dses", "onlyoffice_url"}).Find(&rows)
-	vals := map[string]string{}
-	for _, r := range rows {
-		vals[r.Key] = r.Value
-	}
-	var out []string
-	add := func(u string) {
-		u = strings.TrimRight(strings.TrimSpace(u), "/")
-		if u == "" {
-			return
-		}
-		pu, err := url.Parse(u)
-		if err != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https") {
-			return
-		}
-		origin := pu.Scheme + "://" + pu.Host
-		for _, x := range out {
-			if x == origin {
-				return
-			}
-		}
-		out = append(out, origin)
-	}
-	if raw := strings.TrimSpace(vals["onlyoffice_dses"]); raw != "" && raw != "[]" {
-		var list []struct {
-			URL string `json:"url"`
-		}
-		if err := json.Unmarshal([]byte(raw), &list); err == nil {
-			for _, d := range list {
-				add(d.URL)
-			}
-			if len(out) > 0 {
-				return out
-			}
-		}
-	}
-	add(vals["onlyoffice_url"])
-	return out
-}
-
-// buildCSP 按当前 ONLYOFFICE 来源生成 CSP。
+// csp 全局内容安全策略（静态，不再按站点配置动态生成）。
 // 收紧点（相对旧版）：
-//  - 移除 'unsafe-eval' 与 script/style/connect/frame 的 https: 通配——
-//    原写法等于允许任意第三方站点注入脚本/建立连接，是存储型 XSS 的放大器；
-//  - ONLYOFFICE 文档服务器是动态配置的第三方来源，DocsAPI 需要从其加载脚本、
-//    建 iframe、发起 API 连接，按配置值精确放行该 origin 即可。
-func buildCSP(origins []string) string {
-	joined := strings.Join(origins, " ")
-	csp := "default-src 'self'; " +
-		"script-src 'self' 'unsafe-inline'; " +
-		"style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' data: blob:; " +
-		"media-src 'self' blob:; " +
-		"connect-src 'self'; " +
-		"font-src 'self' data:; " +
-		"frame-src 'self'; " +
-		"frame-ancestors 'none'; " +
-		"object-src 'none'; " +
-		"base-uri 'self'; " +
-		"form-action 'self'"
-	if joined != "" {
-		csp = strings.ReplaceAll(csp, "script-src 'self' 'unsafe-inline'", "script-src 'self' 'unsafe-inline' "+joined)
-		csp = strings.ReplaceAll(csp, "connect-src 'self'", "connect-src 'self' "+joined)
-		csp = strings.ReplaceAll(csp, "frame-src 'self'", "frame-src 'self' "+joined)
-		csp = strings.ReplaceAll(csp, "img-src 'self' data: blob:", "img-src 'self' data: blob: "+joined)
-		csp = strings.ReplaceAll(csp, "media-src 'self' blob:", "media-src 'self' blob: "+joined)
-		csp = strings.ReplaceAll(csp, "font-src 'self' data:", "font-src 'self' data: "+joined)
-	}
-	return csp
-}
+//   - 移除 'unsafe-eval' 与 script/style/connect/frame 的 https: 通配——
+//     原写法等于允许任意第三方站点注入脚本/建立连接，是存储型 XSS 的放大器；
+//   - ONLYOFFICE 文档服务器集成随「在线 Office」功能一并删除，因此不再需要
+//     为动态配置的第三方 origin 放行。**现在没有任何外部 origin 被放行**，
+//     今后若要接入第三方服务，请按最小必要精确增加 origin，不要退回通配。
+const csp = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; " +
+	"media-src 'self' blob:; " +
+	"connect-src 'self'; " +
+	"font-src 'self' data:; " +
+	"frame-src 'self'; " +
+	"frame-ancestors 'none'; " +
+	"object-src 'none'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'"
 
-// SecurityHeaders 全局安全响应头（CSP 按请求生成，10 秒 TTL 缓存避免每请求查库）
+// SecurityHeaders 全局安全响应头
 func SecurityHeaders() gin.HandlerFunc {
-	var (
-		mu       sync.Mutex
-		cached   string
-		cachedAt time.Time
-	)
 	return func(c *gin.Context) {
-		mu.Lock()
-		if time.Since(cachedAt) > 10*time.Second {
-			cached = buildCSP(dsOrigins())
-			cachedAt = time.Now()
-		}
-		csp := cached
-		mu.Unlock()
 		h := c.Writer.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")

@@ -46,7 +46,6 @@ const APP_COMPONENTS: Record<string, Component> = {
   mediaviewer: asyncApp(() => import('../apps/MediaViewer.vue')),
   mediacenter: asyncApp(() => import('../apps/MediaCenter.vue')),
   tasks: asyncApp(() => import('../apps/TaskCenter.vue')),
-  officeeditor: asyncApp(() => import('../apps/OfficeEditor.vue')),
   appcenter: asyncApp(() => import('../apps/AppCenter.vue')),
   settings: asyncApp(() => import('../apps/SettingsApp.vue')),
   admin: asyncApp(() => import('../apps/AdminConsole.vue'))

@@ -23,7 +23,15 @@ import (
 // 本地策略：服务端流式直出；云盘策略：302 跳转到官方签名直链
 type DLHandler struct{ Site *SiteHandler }
 
-func (h *DLHandler) sign(t officeTarget, ttl time.Duration) string {
+// dlTarget 直链签名载荷（策略 + 属主 + 虚拟路径）。
+// 原先复用了 office.go 的类型，随「在线 Office」移除后改为本地定义。
+type dlTarget struct {
+	PolicyID uint
+	UID      uint
+	Path     string
+}
+
+func (h *DLHandler) sign(t dlTarget, ttl time.Duration) string {
 	exp := time.Now().Add(ttl).Unix()
 	payload := fmt.Sprintf("dlink|%d|%d|%s|%d", t.PolicyID, t.UID, t.Path, exp)
 	mac := hmac.New(sha256.New, h.Site.Cfg.Secret)
@@ -31,7 +39,7 @@ func (h *DLHandler) sign(t officeTarget, ttl time.Duration) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + hex.EncodeToString(mac.Sum(nil))
 }
 
-func (h *DLHandler) verify(tok string) (*officeTarget, error) {
+func (h *DLHandler) verify(tok string) (*dlTarget, error) {
 	dot := strings.Index(tok, ".")
 	if dot <= 0 {
 		return nil, errors.New("直链非法")
@@ -57,7 +65,7 @@ func (h *DLHandler) verify(tok string) (*officeTarget, error) {
 	if exp > 0 && time.Now().Unix() > exp {
 		return nil, errors.New("直链已过期")
 	}
-	return &officeTarget{PolicyID: uint(pid), UID: uint(uid), Path: parts[3]}, nil
+	return &dlTarget{PolicyID: uint(pid), UID: uint(uid), Path: parts[3]}, nil
 }
 
 // Create 签发直链（需登录）。expireHours: 1/24/168/720，0 = 永久
@@ -90,7 +98,7 @@ func (h *DLHandler) Create(c *gin.Context) {
 	if hours <= 0 {
 		ttl = time.Duration(100*365*24) * time.Hour // 永久
 	}
-	token := h.sign(officeTarget{PolicyID: policyID, UID: u.ID, Path: vp}, ttl)
+	token := h.sign(dlTarget{PolicyID: policyID, UID: u.ID, Path: vp}, ttl)
 	dto.OK(c, gin.H{
 		"url":       "/api/dl?token=" + token,
 		"expireAt":  time.Now().Add(ttl).UnixMilli(),

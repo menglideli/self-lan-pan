@@ -111,7 +111,7 @@ async function doShare() {
     const s = await shareApi.create({
       policyId: policyId.value, path: path.value,
       password: sharePwd.value || undefined, expireDays: shareExpire.value,
-      remainDownloads: 0, allowDownload: true, previewEnabled: true, allowEdit: false
+      remainDownloads: 0, allowDownload: true, previewEnabled: true
     })
     shareLink.value = location.origin + location.pathname + '#/s/' + s.token
   } catch (e: any) {

@@ -22,7 +22,7 @@ export const useSession = defineStore('session', {
     user: null as User | null,
     // 单用户私有部署：权限档案由后端写死（管理员全开），前端只读
     perms: null as Perms | null,
-    site: { siteName: 'CloudPan', officeConfigured: false, announcement: '', theme: 'win12', demoShare: '', standaloneApps: true, wallpaperCatalog: [] as { name: string; url: string }[] },
+    site: { siteName: 'CloudPan', announcement: '', theme: 'win12', demoShare: '', standaloneApps: true, wallpaperCatalog: [] as { name: string; url: string }[] },
     wallpaper: localStorage.getItem('cp_wallpaper') || 'win12',
     dark: localStorage.getItem('cp_dark') === '1',
     // 系统主题由站点设置全局决定（管理员设置，所有用户看到同一主题），不再存本机偏好

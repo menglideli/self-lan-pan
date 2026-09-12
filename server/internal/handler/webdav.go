@@ -31,8 +31,9 @@ import (
 // 路径段用「挂载名」：不适合出现在 URL 里的字符替换为 `_`，重名自动加 `-盘符` 后缀；
 // 历史盘符形式（/dav/C/…）保留为兼容别名。
 //
-// 只覆盖「本机文件夹挂载」：云盘驱动在这里没有可用的写语义，且本机无法实测，
-// 与其摆一个连不出内容的空目录，不如不收进 WebDAV（索引页会如实说明有几个云盘挂载不在其中）。
+// 只覆盖「本机文件夹挂载」：云盘驱动已从本项目整体移除（单用户私有部署只挂本机目录），
+// 但老数据库里可能还留着云盘类型的策略，所以索引页仍会如实说明它们不在 WebDAV 内，
+// 好让用户知道该去哪里把这条遗留策略卸载掉。
 
 const davPrefix = "/dav"
 
@@ -556,7 +557,7 @@ func davIndexPage() string {
 	b.WriteString(`<div class="tip">把这个地址加进资源管理器／手机的 WebDAV 客户端，就能一次看到以上全部挂载。<br>`)
 	b.WriteString(`单个挂载也可以单独添加：<code>` + davPrefix + `/&lt;名称&gt;/</code>。<br>`)
 	b.WriteString(`登录用网页账号，密码是设置里单独设的 WebDAV 密码。</div>`)
-	// 如实交代边界：云盘挂载不在 WebDAV 里，免得用户以为"加了却没出现"
+	// 如实交代边界：遗留的云盘策略不在 WebDAV 里，免得用户以为"加了却没出现"
 	if names := davNonLocalNames(); len(names) > 0 {
 		b.WriteString(`<div class="tip">另有 ` + fmt.Sprint(len(names)) + ` 个云盘挂载不经 WebDAV：` +
 			html.EscapeString(strings.Join(names, "、")) + `（请用网页文件管理器访问）。</div>`)

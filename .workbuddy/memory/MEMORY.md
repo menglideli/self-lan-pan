@@ -12,7 +12,7 @@
 - ⚠️ **`model.AppEnabled` 对清单外的 key 返回 `true`**（源码注释写的是"向前兼容清单外功能"）。所以「从 Manifest 删 key、但留着 `AppGate(key)` 路由」= 门控静默失效、接口继续可用。删功能必须同时删路由，二者不可分开。
 - 路由唯一装配点：`server/internal/handler/router.go`。
 - 前端主题插件化：`themes/<id>/index.ts` 导出 `ThemeDef` → `themes/registry.ts` 登记；主题 CSS 由 registry 静态 import，删目录即自动摘除。`ThemeId` 联合类型在 `themes/types.ts`（现只剩 `'win12'`）。
-- 存储抽象：`fscore` Driver 注册表（`main.go` 注册 local/pan123/aliyun/baidu/tianyi）。**用户子目录隔离已于批次 1 关闭**，本地盘直接暴露挂载根的真实内容。
+- 存储抽象：`fscore` Driver 注册表 —— **本版本只注册 `local` 一个驱动**（批次 11）。`server/internal/driver/`（pan123/aliyun/baidu/tianyi）与 `handler/cloudauth.go` **已整包删除**，`/api/cloud/auth-url|exchange|status|callback` 四条路由下线（404）。建策略时传非 `local` 的 `type` → `PolicyCreate`/`PolicyUpdate` 直接 400。**用户子目录隔离已于批次 1 关闭**，本地盘直接暴露挂载根的真实内容。
 - **挂载 = 一条 `model.Policy`（`type=local`）**。字段 `Letter` 在 UI 上已完全不显示（用户要求"不要盘符"），但**不能删**——它仍是 WebDAV 的**兼容别名路径段**（`/dav/<letter>/`）、列表排序键、唯一索引。前端不传 `letter` 时由 `handler/localdir.go` 的 `genPolicyLetter()` 自动生成：ASCII 优先（≤4 位），纯中文名退化为 `M`、`M1`、`M2`…
 - **WebDAV = 统一入口 `/dav/`（批次 9 定稿）**：`/dav/` 是**虚拟根**，PROPFIND 列出全部本机挂载（`type='local'` 且未 disabled；**云盘不纳入**），写操作一律拒绝；`/dav/<挂载名>/…` 是单挂载正式路径段；`/dav/<盘符>/…` 是兼容别名。**路径段命名规则只在后端实现**（`webdav.go` 的 `davSeg()` / `davPathOf()`），经 `PolicyList` 的 **`davPath` 字段**下发给前端展示——**改规则只改后端一处**，别在前端重写一套。
 - **WebDAV 认证链路（用户问"手机怎么配"时的事实答案）**：账号 = 网页用户名（`admin`）；密码 = **WebDAV 独立密码**（设置页设，`PUT /api/users/me/webdav-password` → `user.webdav_password_hash`），**不是登录密码**，未设时 401「请在设置中先行设置」；地址 `http://<内网IP>:18322/dav/`；启用开关 = `SiteSetting.webdav_enabled`（默认 true，管理台可关）+ `AppEnabled("webdav")`；失败锁定与网页登录**共用同一张表**（IP+用户名，5 次锁 15 分钟）。
@@ -28,6 +28,11 @@
 - **「复制链接类」入口必须一律走 AddressPicker，别再写 `location.origin`**（批次 10 收口）：多网卡机器上 `location.origin` 未必是对方能访问到的那个（用 localhost 打开就会生成 localhost 链接）。统一约定：**把「地址」与「路径」拆开存**（如 `dlPath = /api/dl?token=…`、`sharePath = pathname + '#/s/' + token`），显示用 `preferred()` 拼建议地址，复制时弹选择器。已接入 5 处：设置页 WebDAV、设置页分享列表、管理台挂载路径、资源管理器（提取直链 / 分享对话框）、记事本分享对话框。**新增任何"复制链接"入口时照这个来，不要退回 `location.origin`。**
 - **内网地址放行开关**：`SiteSetting.offline_allow_private`（默认关）→ `ssrf.go` 的 `ssrfAllowPrivate atomic.Bool`（`SetSSRFAllowPrivate()` 用 **`.Store()`**，`atomic.Bool` 没有 `.Set`）。保存后由 `AdminHandler.SettingsSet` 与 `main.go` 启动时各调一次 `ApplySSRFSetting()`。**加了新站点开关要记得同时接上"启动时应用"那条路径。**
 
+- **任务表的 `Msg` 与 `Error` 是两列，语义不能混（批次 11）**：`Msg` = 运行中的阶段提示（"正在合并分片…"），任务一结束**必须清空**；`Error` = **只在失败时**写入的失败原因。早先两者共用 `error` 列 → 任务跑完后最后一句阶段提示留在列里，前端照显 → `finished` 的任务永远挂着「正在合并分片」（用户报的正是这个）。三层防御：新增 `Task.Msg` 列 + `run()` 成功/取消分支清 `Msg`（成功还清 `Error`）+ 前端只在 `queued/processing` 显示 `msg`。**往任务里加新的进度文案时写 `setTaskMsg()`（写 `msg` 列），别写 `error`。**
+- **离线任务三个动作是分开的路由（批次 11）**：`POST /api/offline/:id/cancel`、`POST /api/offline/:id/retry`、`DELETE /api/offline/:id`。早先 `DELETE` 实际执行的是**取消**，所以失败任务永远删不掉。**重试必须先 `uncancel(id)`**（不清取消标记，新执行体第一次检查就自我了断，表现为"状态排队中但永远不动"）+ `resetTaskProps()` 清运行态字段；**跑动中的任务禁止删除**（记录没了但文件照样落盘）。
+- **离线 / m3u8 的产物命名收敛在 `tasks.go`（批次 11）**：`resolveOutName(d, dir, userName, defaultExt)` —— 填了用用户的名字（缺扩展名补 `defaultExt`，含 `/`、`\` 直接 400），没填走 `nextDailyName()` 生成 `YYYYMMDD_NN<ext>`（`NN` = 当天该目录已有最大编号 + 1）。`uniqueFileName()` 保证同名追加 `_1`/`_2` 而不是覆盖。HLS 产物后缀由 `mediaDefaultExt = ".mp4"` 一个常量控制（合并出来的其实是 MPEG-TS，按用户要求统一叫 `.mp4`）。
+- **策略「测通」走 `GET /api/policies/status?policyId=`（`handler/policycheck.go`，批次 11）**：**先 `os.Stat` 再 `List`**。别退回 `fscore.NewLocal` —— 它内部是 `os.MkdirAll`，会把已经被删掉的挂载目录悄悄重建出来再报「目录可读」，是**验证手段自己在制造假通过**。
+
 ## 构建与验证环境（踩过坑）
 - 本机 Go 1.26.3，`go.mod` 要 1.27.0：必须 `export GOPROXY=https://goproxy.cn,direct`（**勿设 `GOSUMDB=off`**，会导致工具链校验失败）。`proxy.golang.org` 不可达。
 - `server/internal/web/dist/.keep` 已就位，后端可单独 `go build ./...`（`go:embed all:dist` 需要该目录非空）。`build.bat` 会先 `rmdir` 整个 dist 再 xcopy，**所以它必须自己重建 `.keep`**（批次 7 补上；`build.sh` 本就有 `touch .keep`）。
@@ -42,7 +47,7 @@
 - **`el.click()` 会绕过 `pointer-events: none`**（程序化事件不做命中测试）→ 用它断言"按钮点不动"**永远 PASS**（空转）。断言渲染层行为（点不动 / 看不见 / 被遮挡）必须走 CDP `Input.dispatchMouseEvent` 打真实鼠标事件（`ui.mjs` 的 `realClick()`）。批次 8 实测：变异版本 detail = `click=true dlg=false`，只有真实鼠标点才抓得到。
 - **Node 的 `fetch`（undici）会静默忽略 `init.auth`**（那是浏览器 XHR 的选项）→ 用它做 HTTP Basic Auth 会让请求变成"无认证"，**一整批 401 断言假通过**。必须自己拼 `Authorization: 'Basic ' + Buffer.from(u+':'+p).toString('base64')`。批次 9 追加实测踩到（16 PASS 全是空的）。
 - **`#/app/<id>` 是 `StandaloneApp` 独立单应用模式**，切 hash 会**整个替换页面**（Explorer 被卸载重建）。要验证"两个窗口并存"的场景（如管理台改挂载 → 文件管理器刷新）必须走「桌面外壳 → 双击桌面图标开窗」的多窗口路径；用切 hash 的方式测，测到的其实是"窗口重建后重新拉取"，是假通过。
-- **同一文件并行下发多个 Edit 会丢改动**（工具报成功，但部分写入被并发读-改-写覆盖）。同一文件的多次编辑必须串行下发，改完用 Grep/Read 复核。
+- **同一文件并行下发多个 Edit 会丢改动**（工具报成功，但部分写入被并发读-改-写覆盖）。同一文件的多次编辑必须串行下发，改完用 Grep/Read 复核。**批次 11 第三次中招，而且是最难察觉的一次**：一条消息里给 `probe-webdav.mjs` 发 5 处改动**实际落盘 0 处**、`probe-m3u8.mjs` 发 4 处只落 2 处（第 2、4 处）、`ui.mjs` 发 2 处只落 1 处、`README.md` 发 4 处只落 1 处，而 `Edit` **全部返回 `Successfully edited`**。表现是"回归跑出来的 FAIL 文案正是已经删掉的那几句"，极易误判成自己的改动思路错了。**判据：改完立刻 grep 目标行。**
 - **`.bat` 里不要出现中文，已有中文也要清掉**（批次 7 + 批次 9 两次实测炸过）：`build.bat`/`start.bat` 是 **UTF-8 无 BOM**，cmd 按系统 ANSI（GBK）代码页读取；中文字节被 GBK 解读后可能凑出 `&`/`|`/`>` 等元字符，直接把命令行打断。现象是构建 0.2 秒 `BUILD FAILED` + `'ist' 不是内部或外部命令`（`dist` 被截断）；批次 9 的表现是**中文 `rem` 吞掉后一行**（`setlocal` 消失）+ 早段报「文件名、目录名或卷标语法不正确」。脚本内容一律 ASCII 英文。
 - **PowerShell 工具禁止直接调 `cmd.exe`**（"cmd.exe cannot be used from the PowerShell tool"）。要跑 `.bat` 用 Node `spawn('cmd.exe', ['/c','build.bat'])`——`%TEMP%\cp-verify2\run-build.mjs`（跑 build.bat 并自检产物）与 `run-start.mjs`（跑 start.bat + taskkill）就是这么干的。
 - **跑 `start.bat` 会在仓库里建真实 `server/data`**（它 `cd /d "%~dp0server"` 且不设 `CP_DATA`），即建出一个真实 admin 账号；密码只在那一瞬的日志里，用户没看到，下次启动又不会重印 → 直接进不去。**验证完必须删掉整个 `server/data`**（先确认 `CreationTime` 就是验证时刻），或先重定向 `CP_DATA` 到临时目录。
@@ -61,7 +66,9 @@
 4. ~~`middleware/guest.go`、`model.IsGuestUser`、`model.GuestUsername`~~ —— **已于批次 2 删除**，游客体系整体移除。
 5. `dlink.go`（直链签名）复用了 `office.go` 里定义的 `officeTarget` 类型当载荷。删 Office 时必须先把这个类型迁走或内联，否则直链功能编译不过。
 6. ~~`middleware/security.go` 的 CSP 按 ONLYOFFICE origin 动态放行~~ —— **已于批次 4c 改为静态 CSP**（`dsOrigins()`/`buildCSP()` 已删）。现在**不再放行任何第三方 origin**，是安全收益；今后接第三方服务请按最小必要精确加 origin，别退回通配。
-7. **公共代码会"借住"在功能文件里**：`office.go` 除 ONLYOFFICE 外还定义了 `CloudAuth`（云盘 OAuth 授权，**保留功能**）和 `publicBaseOf()` / `parseUintQuery()`。删这类文件前**必须先列出它的顶层声明**，把不属于该功能的符号先迁走（本次落在 `handler/cloudauth.go`），否则编译直接崩。
+7. **公共代码会"借住"在功能文件里**：`office.go` 除 ONLYOFFICE 外还定义过 `CloudAuth`（云盘 OAuth）和 `publicBaseOf()` / `parseUintQuery()`。删这类文件前**必须先列出它的顶层声明**，把不属于该功能的符号先迁走，否则编译直接崩。
+   - 批次 4c 把这些符号迁到了 `handler/cloudauth.go`；**批次 11 又把 `cloudauth.go` 整个删掉**（云盘授权整体移除），其中仍然通用的 `parseUintQuery()` 落到了新的 `handler/policycheck.go`。
+   - → **教训：临时迁走的公共符号会变成下一个"借住"问题。迁移时就要想清楚它最终该住在哪，别只图当次编译通过。**
 8. **`Share.AllowEdit` 已删除**（`office.go` 是它唯一的读取方）。DB 的 `allow_edit` 列保留未迁移，无害；别再在前端加回「允许在线编辑」开关。
 9. **`fscore.NewLocal` 内部是 `os.MkdirAll`** —— 它对不存在的路径会**静默创建目录**然后成功返回。这曾让"挂载一个打错的路径"返回 code 0 并在磁盘上留下空目录（已实测复现）。现在 `PolicyCreate` 对 local 类型加了 `os.Stat` 预检（目录必须已存在）。**改这里时别把预检删了**，也别指望 `NewLocal` 自己会拒绝。
 10. **改 `Policy` 相关代码时注意 `letter` 的隐式约束**：空字符串在 SQLite 里是一个真实值，多个空 `letter` 会撞唯一索引。任何"清空 letter"的路径都必须先经过 `genPolicyLetter()` 或回退原值。
@@ -75,7 +82,7 @@
 登录页只留密码框；文件管理器不要盘符、根视图直接列挂载点；挂载入口放文件管理器内（后端需新增目录浏览接口）；手机先走 WebDAV；公开分享暂留；**用户组 / 权限模型彻底删除、权限写死为管理员全开**（配额不限；`RecycleRetentionDays: 0` = 回收站永久保留，系统不再有任何"按时间自动物理删用户文件"的行为）。
 
 ## README 状态（批次 7 已重写，勿再拿旧描述当事实）
-README 已于批次 7 按当前功能面重写（双语）：删掉整章《在线 Office（ONLYOFFICE）部署指南》，顶部介绍 / 功能特性 / 快速开始 / 目录结构 / 部署加固全部重写，截图由 25 张（三主题 + 含已删界面）换成当前状态实拍 5 张（登录页 / 桌面 / 根视图 / 挂载对话框 / 挂载点内容，由 `ui.mjs` 真实动线产出）。**《云盘接入与扫码绑定》与历史 changelog 原样保留**——后者开头有「范围说明」交代"其中描述的能力在本分支多已裁剪"。另外：Go 版本要求已从 `1.22+` 更正为 **`1.27+`**（`go.mod` 是 `go 1.27.0`）。核对功能仍以代码为准。
+README 已于批次 7 按当前功能面重写（双语）：删掉整章《在线 Office（ONLYOFFICE）部署指南》，顶部介绍 / 功能特性 / 快速开始 / 目录结构 / 部署加固全部重写，截图由 25 张（三主题 + 含已删界面）换成当前状态实拍 5 张（登录页 / 桌面 / 根视图 / 挂载对话框 / 挂载点内容，由 `ui.mjs` 真实动线产出）。**《云盘接入与扫码绑定》整章（中英）已于批次 11 替换为《挂载本机目录（唯一的存储类型）》**——云盘挂载不再存在，教程留着就是误导；历史 changelog 仍原样保留（开头有「范围说明」交代"其中描述的能力在本分支多已裁剪"）。批次 11 同时清掉了顶部介绍、功能特性、目录结构（`driver/` 两处）、管理台功能清单里的云盘与 `1.22+` 之类过时描述。另外：Go 版本要求已从 `1.22+` 更正为 **`1.27+`**（`go.mod` 是 `go 1.27.0`）。核对功能仍以代码为准。
 
 ## 当前进度
 - 2026-09-11：项目审计，产出 `docs/单用户私有化改造计划.md`（v2 定稿，7 个批次）。
@@ -90,11 +97,12 @@ README 已于批次 7 按当前功能面重写（双语）：删掉整章《在�
 - 批次 7 ✅：全链路 `build.bat` 通过（exit 0 / `BUILD OK` / 24.7s / exe 61 MB / 嵌入 **134** 个 dist 条目）；用**构建产物本身**跑 `smoke.mjs` **60/60**、`ui.mjs` **22/22**；`start.bat` 语法与首部署日志验证通过；README 按当前功能面重写完成（见上节）。
 - 批次 8 ✅ `3d8676a`：修复用户内网真机反馈的 5 个问题 —— ①空态「挂载文件夹」按钮点不动（根因：`base.css` 的 `.empty-hint` 带 `pointer-events:none`，空态里嵌的按钮被一起禁用）；②进入挂载文件夹后「后退」点了没反应（根因：`pushHistory` 压的是目标路径而非来处）；③管理台新增挂载后文件管理器不刷新（新增 `cp-policies-changed` 广播）；④删管理台「系统更新」页签及全部前端调用（**后端 `/api/admin/update/*` 路由保留**）；⑤离线下载"没下下来"（**后端本就正常**，实测 38MB / 3s 下完并落盘；真因是前端完成后不刷新目录 + 不显示失败原因）。
 - 验证：`smoke.mjs` **60/60**、`ui.mjs` **34/34**（批次 8 新增 12 项）、`probe-all.mjs`（离线下载专项，新）、**4 处反向变异全部命中**（含离线下载变异精确复现了用户现象）。
-- **全部 10 个批次已完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7，§7.4 = 批次 8，§7.5 = 批次 9，§7.6 = 批次 9 追加，§7.7 = 批次 10）。
+- **11 个批次全部完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7，§7.4 = 批次 8，§7.5 = 批次 9，§7.6 = 批次 9 追加，§7.7 = 批次 10，**§7.8 = 批次 11**）。
 - 批次 7 顺手修掉的真问题：① `build.bat` 不重建 `.keep`（先 `rmdir` 整个 dist）→ 空克隆后 `go:embed` 会失败，已补 `type nul > dist\.keep`；② README 的 Go 版本要求写着 `1.22+`（实际 `go.mod` 要 1.27.0）→ 更正为 `1.27+`；③ `start.bat` 注释还写着"默认账号 admin / admin123"（实际首部署是随机密码）→ 已改。
 - 批次 9 ✅：① 删掉系统自更新（`handler/update.go` 整文件 536 行 + 4 条路由 + `UpdateLog` + `main.go` 自重启）；② WebDAV 改为**统一入口 `/dav/`**（列全部本机挂载）+ 单挂载 `/dav/<挂载名>/` + 兼容别名 `/dav/<盘符>/`；顺手修掉 `DavAuth()` 里令 README 写的地址一律 403 的遗留前缀校验。
 - 批次 9 验证：`probe-webdav.mjs` **44/44**（新，含统一根只读/跨挂载拒绝/同名去重/401/编码）、`smoke.mjs` **60/60**、`ui.mjs` **35/35**、`build.bat` 真跑 exit 0 / 23.6 s / exe 64,166,400 B / 嵌入 119；**3 处反向变异全部命中**，其中 1 处（`davWriteFile.Close()` 临时文件残留）是首轮实测真实抓到的缺陷。
 - 批次 9 追加 ✅：修掉手机端接入实测暴露的两个**真缺陷** —— ①`PUT /dav/<挂载名>/` 会把**空目录整个删掉换成文件**（`LocalDriver.CreateFile` 的 `os.Remove(phys)` 所致；现返回 405 且零字节落盘）；②统一根的 `displayname` 是物理目录名而非挂载名（webdav 走 `OpenFile().Stat()`，只改 `FileSystem.Stat` 是死代码）。新增 `probe-phone.mjs` **40/40**、`probe-dav-root.mjs`；批次 9 的 44/44、60/60、35/35 全部复跑无回归。
 - 批次 10 ✅：用户真机反馈 4 件事 —— ①列表内容多时无法滚动（`flex:1` 只在 flex 父容器生效 + 子项缺 `min-height:0`）；②离线下载"不支持"= 后端实测都通、缺的是可诊断性（补 tracker/节点数回写/超时原因/Referer/内网开关/前端显示原因）；③新增 m3u8（HLS）下载；④多网卡地址全列出由用户挑。验证：`probe-m3u8` **28/28**、`probe-offline` **11/11**、`probe-addr` **27/27**、`probe-scroll` **13/13**，回归 `smoke` 60/60 / `probe-webdav` 44/44 / `probe-phone` 40/40 / `ui` 35/35，`go build`/`go vet`/`build.bat` exit 0，**3 处反向变异**精确命中。详见当日日志 §批次 10。
 - 批次 10 追加 ✅：把"复制链接"入口全部接上 `AddressPicker`（资源管理器提取直链 / 资源管理器分享 / 记事本分享；设置页与管理台先前已接）。教训：**"我以为覆盖了"≠"用户说的那个地方覆盖了"** —— 收尾时要拿用户原话逐字过一遍入口清单。
-- 待用户拍板（均不阻塞）：① `docs/test-evidence/` 上游测试证据存档（含 guest / 终端旧截图，README 已不引用）是否清理；② 媒体中心当前是 `installable`（需去应用中心装），是否改为开机即在桌面；③ 手机端前端（暂缓，先走 WebDAV）。
+- 批次 11 ✅（2026-09-12）：用户真机反馈的 5 件事 —— ①m3u8 产物可自定义命名（缺扩展名自动补 `.mp4`），不填则 `YYYYMMDD_NN.mp4`，同名不覆盖；②修「任务已完成却一直显示正在合并分片」（阶段提示与失败原因拆成 `Msg`/`Error` 两列）；③离线任务**详情面板** + 取消/重试/删除三动作分离；④存储策略收口为**只挂本机目录**（云盘驱动整包删除、4 条 `/api/cloud/*` 路由下线、`PolicyCreate`/`PolicyUpdate` 拒非 `local`）；⑤清理 `docs/test-evidence/`。验证：`probe-m3u8` **48/48**、`probe-offline` **22/22**、`probe-policy` **26/26**（新增），回归 `smoke` 61/61 / `probe-webdav` 45/45 / `probe-phone` 40/40 / `ui` 36/36 / `probe-addr` 27/27 / `probe-scroll` 13/13 / `probe-dav-root` 全 4xx —— **合计 318 条断言全绿**；**4 次反向变异全部精确命中**（其中"成功分支不清 `msg`"那条精确复现了用户症状 `msg="正在合并分片..."`）。详见当日日志。
+- **三项遗留决策已拍板（2026-09-12）：`docs/test-evidence/` 清理；手机端前端不做（走 WebDAV 足够）；媒体中心暂时用不上（保留但不作为动线）。此后不要再把它们当待办。**

@@ -240,8 +240,12 @@ func (p *TaskPool) mkdirChain(d interface {
 	return nil
 }
 
+// setTaskMsg 写运行中的阶段提示（Task.Msg 列）。
+//
+// 注意不要再把阶段消息写进 error 列：任务结束后 error 必须为空，否则
+// 已完成的任务会一直显示最后那句阶段提示（"正在合并分片..."）。
 func (p *TaskPool) setTaskMsg(id uint, msg string) {
-	model.DB.Model(&model.Task{}).Where("id = ?", id).UpdateColumn("error", msg)
+	model.DB.Model(&model.Task{}).Where("id = ?", id).UpdateColumn("msg", msg)
 }
 
 func (p *TaskPool) saveProps(id uint, props btProps) {

@@ -104,7 +104,7 @@
             <div v-for="p in policies" :key="p.id" style="margin: 12px 0">
               <div style="display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 6px">
                 <span style="font-weight: 600">{{ p.name }}</span>
-                <span style="color: var(--text-3)">{{ fmt(p.usageBytes) }} 已用 · {{ typeName(p.type) }}</span>
+                <span style="color: var(--text-3)" :title="p.rootPath">{{ fmt(p.usageBytes) }} 已用</span>
               </div>
               <div class="ac-progress"><div class="ac-progress-fill" :style="{ width: Math.max(3, Math.min(100, p.usageBytes / ((1<<30)*10) * 100)) + '%' }"></div></div>
             </div>
@@ -118,7 +118,7 @@
         <template v-else-if="tab === 'policies'">
           <div class="ac-head">
             <h2 class="ac-h2">挂载管理</h2>
-            <button class="btn primary" @click="newPolicy"><AppIcon name="plus" :size="15" />挂载存储</button>
+            <button class="btn primary" @click="newPolicy"><AppIcon name="plus" :size="15" />挂载本机目录</button>
           </div>
           <div class="ac-card" style="padding: 4px 0">
             <table class="ac-table">
@@ -126,14 +126,16 @@
               <tbody>
                 <tr v-for="p in policies" :key="p.id">
                   <td class="ac-strong">{{ p.name }}</td>
-                  <td><span class="ac-tag" :class="{ admin: p.type !== 'local' }">{{ typeName(p.type) }}</span></td>
+                  <!-- 单用户私有部署只有「本地目录」；遗留的云盘策略标注出来，好让用户去卸载它 -->
+                  <td>
+                    <span class="ac-tag" :class="{ admin: p.type !== 'local' }">{{ typeName(p.type) }}</span>
+                  </td>
                   <td>
                     <div style="font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis" :title="p.rootPath || ''">{{ p.rootPath || p.statusMsg || '-' }}</div>
                     <div class="ac-status" :class="p.status"><span class="ac-dot" :class="{ off: p.status !== 'active' }"></span>{{ p.status === 'active' ? '正常' : p.status === 'disabled' ? '已停用' : '异常' }}</div>
                     <div v-if="p.davPath" class="ac-status" style="color: var(--text-3); cursor: pointer"
                          :title="'点击选择本机地址并复制：' + p.davPath"
                          @click="copyDav(p.davPath)">WebDAV {{ p.davPath }}</div>
-                    <div v-else class="ac-status" style="color: var(--text-3)">云盘不经 WebDAV</div>
                   </td>
                   <td>{{ fmt(p.usageBytes) }}</td>
                   <td>
@@ -145,7 +147,7 @@
                 </tr>
               </tbody>
             </table>
-            <div v-if="!policies.length" style="padding: 24px; text-align: center; color: var(--text-3); font-size: 13px">点击右上角「挂载存储」把本机目录或云盘加进网盘（也可在文件管理器里点「挂载文件夹」）</div>
+            <div v-if="!policies.length" style="padding: 24px; text-align: center; color: var(--text-3); font-size: 13px">点击右上角「挂载本机目录」把本机文件夹加进网盘（也可在文件管理器里点「挂载文件夹」）</div>
           </div>
         </template>
 
@@ -175,7 +177,7 @@
           <div class="ac-head"><h2 class="ac-h2">任务队列监控</h2></div>
           <div class="ac-card" style="padding: 4px 0">
             <table class="ac-table">
-              <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>进度</th><th>时间</th><th>错误</th></tr></thead>
+              <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>进度</th><th>时间</th><th>说明</th></tr></thead>
               <tbody>
                 <tr v-for="t in tasks" :key="t.id">
                   <td>#{{ t.id }}</td>
@@ -183,7 +185,11 @@
                   <td><span class="ac-status" :class="t.status === 'finished' ? 'active' : t.status"><span class="ac-dot" :class="{ off: t.status === 'error' || t.status === 'canceled' }"></span>{{ taskStatusName(t.status) }}</span></td>
                   <td style="width: 160px"><div class="ac-progress"><div class="ac-progress-fill" :style="{ width: t.progress + '%' }"></div></div></td>
                   <td style="color: var(--text-3)">{{ new Date(t.createdAt).toLocaleString() }}</td>
-                  <td style="color: var(--danger); font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis">{{ t.error }}</td>
+                  <!-- 失败原因只在失败时显示；运行中的阶段提示（msg）单独一列，避免混在一起看不出是"报错"还是"进度" -->
+                  <td style="font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis">
+                    <span v-if="t.status === 'error'" :title="t.error" style="color: var(--danger)">{{ t.error }}</span>
+                    <span v-else-if="t.msg" :title="t.msg" style="color: var(--text-3)">{{ t.msg }}</span>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -340,85 +346,24 @@
       </div>
     </div>
 
-    <!-- 存储策略对话框 -->
+    <!-- 存储策略对话框（单用户私有部署：只挂本机磁盘目录，云盘挂载整体移除） -->
     <div class="dialog-mask" v-if="policyShow" @click.self="closePolicy">
       <div class="dialog" style="width: 480px">
-        <h3>{{ editPolicy.id ? '编辑' : '挂载' }}存储</h3>
+        <h3>{{ editPolicy.id ? '编辑' : '挂载' }}本机目录</h3>
         <div class="row">
           <label>类型</label>
-          <select class="input" v-model="editPolicy.type" style="width: 100%">
-            <option value="local">本地磁盘目录</option>
-            <option value="pan123">123云盘（官方开放平台）</option>
-            <option value="aliyun">阿里云盘（开放平台）</option>
-            <option value="baidu">百度网盘（官方 API，默认只读）</option>
-            <option value="tianyi">天翼云盘（实验性，粘贴 Cookie）</option>
-          </select>
+          <input class="input" value="本地磁盘目录" disabled style="width: 100%" />
         </div>
         <div class="row"><label>显示名称</label><input class="input" v-model="editPolicy.name" placeholder="如：电影 / 我的云盘" style="width: 100%" /></div>
-        <div class="row" v-if="editPolicy.type === 'local'">
+        <div class="row">
           <label>本机目录</label>
           <input class="input" v-model="editPolicy.rootPath" placeholder="如 E:\媒体\电影（也可在文件管理器里点「挂载文件夹」用选择器挑）" style="width: 100%" />
         </div>
-        <template v-if="editPolicy.type === 'pan123'">
-          <div class="row"><label>ClientID（123 开放平台）</label><input class="input" v-model="pOpts.client_id" style="width: 100%" /></div>
-          <div class="row"><label>ClientSecret</label><input class="input" v-model="pOpts.client_secret" style="width: 100%" /></div>
-        </template>
-        <template v-else-if="editPolicy.type === 'aliyun'">
-          <div class="row"><label>ClientID（开放平台应用 ID）</label><input class="input" v-model="pOpts.client_id" style="width: 100%" /></div>
-          <div class="row"><label>ClientSecret</label><input class="input" v-model="pOpts.client_secret" style="width: 100%" /></div>
-          <div class="row">
-            <label>refresh_token</label>
-            <div style="display: flex; gap: 8px"><input class="input" v-model="pOpts.refresh_token" placeholder="扫码授权后自动填入，也可手动粘贴" style="flex: 1" /><button class="btn" @click="startAuth()">扫码授权</button></div>
-          </div>
-        </template>
-        <template v-else-if="editPolicy.type === 'baidu'">
-          <div class="row"><label>AppKey</label><input class="input" v-model="pOpts.client_id" style="width: 100%" /></div>
-          <div class="row"><label>SecretKey</label><input class="input" v-model="pOpts.client_secret" style="width: 100%" /></div>
-          <div class="row">
-            <label>access_token</label>
-            <div style="display: flex; gap: 8px"><input class="input" v-model="pOpts.access_token" placeholder="扫码授权后自动填入，也可手动粘贴" style="flex: 1" /><button class="btn" @click="startAuth()">扫码授权</button></div>
-          </div>
-        </template>
-        <template v-else-if="editPolicy.type === 'tianyi'">
-          <div class="row"><label>网页版 Cookie（实验性）</label><input class="input" v-model="pOpts.cookie" style="width: 100%" /></div>
-        </template>
-        <!-- 扫码授权面板：二维码 = 厂商授权页地址（带签名 state），手机扫码→授权→厂商重定向回 /api/cloud/callback 自动完成 -->
-        <div v-if="qrImg" class="qr-panel">
-          <img :src="qrImg" alt="授权二维码" />
-          <div class="qr-actions">
-            <a :href="qrUrl" target="_blank" rel="noopener">手机不便？点此在电脑浏览器打开授权页</a>
-            <button class="btn" style="padding: 2px 10px" @click="stopQr">取消</button>
-          </div>
-          <div class="qr-actions" style="justify-content: center">
-            <a href="#" @click.prevent="startAuth(true)">手机无法访问本站？改用「粘贴授权码」模式</a>
-          </div>
-        </div>
-        <div v-if="authMsg" style="font-size: 12px; color: var(--theme-2); margin-bottom: 10px; word-break: break-all">{{ authMsg }}</div>
         <div class="ac-guide">
-          <template v-if="editPolicy.type === 'pan123'">
-            <b>123云盘开通步骤：</b>
-            ① 访问 <a href="https://www.123pan.com/developer" target="_blank">123 开放平台</a> 注册开发者
-            ② 创建应用获取 ClientID / ClientSecret 填入上方
-            ③ 挂载后点「测通」验证连通
-          </template>
-          <template v-else-if="editPolicy.type === 'aliyun'">
-            <b>阿里云盘挂载教程：</b>
-            ① 前往 <a href="https://open.alipan.com" target="_blank">阿里云盘开放平台</a> 注册开发者并创建应用，获得 ClientID / ClientSecret 填入上方
-            ② 确认「站点设置 → 公开地址」为手机可访问的地址（纯内网部署填内网地址即可，手机需与服务器同网段）
-            ③ 点「扫码授权」→ 用阿里云盘 App / 手机浏览器扫二维码 → 登录并确认授权 → 手机显示绑定成功，本页 token 自动填入
-            ④ 保存后点列表「测通」验证连通
-          </template>
-          <template v-else-if="editPolicy.type === 'baidu'">
-            <b>百度网盘挂载教程：</b>
-            ① 前往 <a href="https://console.bce.baidu.com" target="_blank">百度智能云控制台</a>（开放平台）创建应用，获得 AppKey / SecretKey 填入上方
-            ② 在应用的「回调地址」里登记 <code>本站公开地址 + /api/cloud/callback</code>（与站点设置一致，百度要求回调地址预先登记）
-            ③ 点「扫码授权」→ 手机扫码登录百度账号并确认授权 → 绑定成功自动回填
-            ④ 上传/写操作需申请接口白名单，未获批前为只读挂载（查看/下载不受限）
-          </template>
-          <template v-else-if="editPolicy.type === 'tianyi'">
-            <b>天翼云盘（实验性）：</b>
-            电脑浏览器登录天翼云盘网页版 → F12 复制 Cookie 整串填入上方。接口为社区逆向，随时可能失效。
-          </template>
+          <b>挂载本机目录：</b>
+          ① 填一个<b>已存在</b>的绝对路径（也可在文件管理器中进入该目录后点「挂载文件夹」用选择器挑）；<br>
+          ② 保存后点列表里的「测通」验证目录是否可读；<br>
+          ③ 手机/其他电脑走 WebDAV 访问时，地址用列表里那行 <code>WebDAV /dav/…</code>（点一下会让你选本机地址）。
         </div>
         <div class="actions">
           <button class="btn" @click="closePolicy">取消</button>
@@ -440,7 +385,6 @@ import { useUiDialog, useToast } from '../stores/dialog'
 import { adminApi } from '../api/modules'
 import AppIcon from '../components/AppIcon.vue'
 import AddressPicker from '../components/AddressPicker.vue'
-import QRCode from 'qrcode'
 
 const session = useSession()
 const uiDlg = useUiDialog()
@@ -523,10 +467,9 @@ const notifClearedOnly = ref(false)
 const settings = ref<Record<string, string>>({})
 
 const policyShow = ref(false)
+// 单用户私有部署：类型固定为「本地磁盘目录」，云盘挂载与其授权流程已整体移除
 const editPolicy = ref<any>({})
 const emptyPolicy = { type: 'local', name: '', letter: '', rootPath: '' }
-const pOpts = ref<Record<string, string>>({})
-const authMsg = ref('')
 
 function switchTab(id: string) {
   tab.value = id
@@ -538,7 +481,7 @@ function switchTab(id: string) {
 // 挂载列表指纹：保存上一次挂载项（id/名称）快照，用于避免无变化时反复广播
 let lastPolicySig = ''
 onMounted(() => { loadAll(); startSysPoll() })
-onUnmounted(() => { stopSysPoll(); stopAuthPoll() })
+onUnmounted(() => { stopSysPoll() })
 async function loadAll() {
   try {
     dash.value = await adminApi.dashboard()
@@ -576,9 +519,10 @@ function exportLogs() {
 }
 
 function typeName(t: string) {
-  return ({ local: '本地目录', pan123: '123云盘', aliyun: '阿里云盘', baidu: '百度网盘', tianyi: '天翼云盘' } as any)[t] || t
+  // 只保留本地目录；更早版本遗留的云盘策略仍能在列表里看出类型（便于用户卸载它）
+  return ({ local: '本地目录', pan123: '123云盘（已不支持）', aliyun: '阿里云盘（已不支持）', baidu: '百度网盘（已不支持）', tianyi: '天翼云盘（已不支持）' } as any)[t] || t
 }
-function taskTypeName(t: string) { return ({ offline: 'HTTP 离线', bt: 'BT/磁力链', compress: '压缩', decompress: '解压', transfer: '转存' } as any)[t] || t }
+function taskTypeName(t: string) { return ({ offline: 'HTTP 离线', m3u8: 'm3u8 视频', bt: 'BT/磁力链', compress: '压缩', decompress: '解压', transfer: '转存' } as any)[t] || t }
 function taskStatusName(s: string) { return ({ queued: '排队中', processing: '执行中', finished: '完成', error: '失败', canceled: '已取消' } as any)[s] || s }
 function notifTypeName(t: string) { return ({ task: '任务', quota: '配额', system: '系统', offline: '离线下载' } as any)[t] || t }
 function fmt(n: number) {
@@ -592,27 +536,23 @@ function fmtGB(n: number) {
 }
 
 async function editPolicyRow(p: any) {
-  editPolicy.value = { id: p.id, name: p.name, letter: p.letter, type: p.type, rootPath: p.rootPath }
-  pOpts.value = { ...(p.options || {}) }
-  stopQr()
+  editPolicy.value = { id: p.id, name: p.name, letter: p.letter, type: 'local', rootPath: p.rootPath }
   policyShow.value = true
 }
 function newPolicy() {
   editPolicy.value = { ...emptyPolicy }
-  pOpts.value = {}
-  stopQr()
   policyShow.value = true
 }
 async function checkPolicy(p: any) {
   try {
     const { get } = await import('../api/http')
-    const st = await get<{ ok: boolean; msg?: string; used?: number; total?: number }>(`/cloud/status?policyId=${p.id}`)
+    const st = await get<{ ok: boolean; msg?: string; used?: number; total?: number }>(`/policies/status?policyId=${p.id}`)
     if (st.ok) {
-      // 本地策略无配额信息：直接展示 msg（"本地存储"），避免出现"已用 -"
+      // 本地目录的「连通」= 目录真的读得出来（能读到多少项也一并回报）
       const detail = st.used || st.total
         ? `已用 ${fmt(st.used || 0)}${st.total ? ' / 总量 ' + fmt(st.total) : ''}`
         : (st.msg || '正常')
-      await uiDlg.alert('测通结果', `连通正常！${detail}`)
+      await uiDlg.alert('测通结果', `挂载正常！${detail}`)
     } else await uiDlg.alert('测通失败', st.msg || '未知错误')
   } catch (e: any) { toast.error(e.message) }
 }
@@ -624,7 +564,7 @@ async function delPolicy(p: any) {
   try { await adminApi.policyDelete(p.id); loadAll() } catch (e: any) { toast.error(e.message) }
 }
 async function savePolicy(silent = false) {
-  const d: any = { ...editPolicy.value, options: pOpts.value }
+  const d: any = { ...editPolicy.value }
   if (editPolicy.value.id) await adminApi.policyUpdate(editPolicy.value.id, d)
   else {
     const p = await adminApi.policyCreate(d)
@@ -635,60 +575,7 @@ async function savePolicy(silent = false) {
 async function createPolicy() {
   try { await savePolicy() } catch (e: any) { toast.error(e.message) }
 }
-// ---- 云盘扫码绑定：渲染厂商授权页二维码（带签名 state），轮询 /cloud/status 直到回调完成 ----
-const qrUrl = ref('')
-const qrImg = ref('')
-let authPoll: ReturnType<typeof setInterval> | null = null
-
-async function startAuth(codeMode = false) {
-  authMsg.value = ''
-  qrImg.value = ''
-  stopAuthPoll()
-  try {
-    const { get, post } = await import('../api/http')
-    await savePolicy(true)
-    // codeMode：手机完全不可达本站时的回退——oob 授权页直接显示授权码，人工粘贴
-    const r = await get<{ url: string; mode: string }>(`/cloud/auth-url?policyId=${editPolicy.value.id}${codeMode ? '&mode=code' : ''}`)
-    if (!r.url) { authMsg.value = '该类型无需跳转授权'; return }
-    if (r.mode === 'qr' && !codeMode) {
-      // 扫码绑定：二维码即厂商授权页（redirect 回 /api/cloud/callback），手机扫码→授权→自动回填
-      qrUrl.value = r.url
-      qrImg.value = await QRCode.toDataURL(r.url, { width: 180, margin: 1, errorCorrectionLevel: 'M' })
-      authMsg.value = '正在等待扫码授权… 用云盘 App / 手机浏览器扫描二维码并确认授权（手机需能访问本站「公开地址」）。'
-      pollAuth()
-    } else {
-      // 回退：授权码粘贴模式（站点公开地址不可达时使用）
-      window.open(r.url, '_blank')
-      const code = prompt('完成授权登录后，把页面上的授权码(code)粘贴到这里：')
-      if (!code) return
-      await post('/cloud/exchange', { policyId: editPolicy.value.id, type: editPolicy.value.type, code })
-      authMsg.value = '授权成功！'
-      loadAll()
-    }
-  } catch (e: any) { authMsg.value = e.message }
-}
-function pollAuth() {
-  stopAuthPoll()
-  authPoll = setInterval(async () => {
-    try {
-      const { get } = await import('../api/http')
-      const st = await get<{ ok: boolean; msg?: string }>(`/cloud/status?policyId=${editPolicy.value.id}`)
-      if (!st.ok) return // 尚未绑定（缺 token 时 status 报"需要 refresh_token…"）
-      stopAuthPoll()
-      qrImg.value = ''
-      authMsg.value = '授权成功！'
-      // 拉取最新 options 回填 token 字段
-      const list = await get<any[]>('/admin/policies')
-      const p = (list || []).find((x: any) => x.id === editPolicy.value.id)
-      if (p) pOpts.value = { ...(p.options || {}) }
-      toast.success('云盘绑定成功')
-      loadAll()
-    } catch { /* 轮询中的网络抖动忽略 */ }
-  }, 2500)
-}
-function stopAuthPoll() { if (authPoll) { clearInterval(authPoll); authPoll = null } }
-function stopQr() { stopAuthPoll(); qrImg.value = ''; authMsg.value = '' }
-function closePolicy() { stopQr(); policyShow.value = false }
+function closePolicy() { policyShow.value = false }
 async function saveSettings() {
   try {
     await adminApi.settingsSet(settings.value)
@@ -787,14 +674,6 @@ async function adminDelShare(s: any) {
 }
 .ac-guide b { color: var(--theme-2); display: block; margin-bottom: 2px; }
 .ac-guide a { color: var(--theme-2); }
-.qr-panel {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 14px; margin-bottom: 10px; border-radius: 10px;
-  background: var(--card, #fff); border: 1px solid var(--stroke-b, #e5e7eb);
-}
-.qr-panel img { border-radius: 8px; }
-.qr-panel .qr-actions { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-.qr-panel .qr-actions a { color: var(--theme-2); }
 
 /* 系统资源监控 */
 .sys-card .ac-row-title { display: flex; align-items: center; gap: 8px; }

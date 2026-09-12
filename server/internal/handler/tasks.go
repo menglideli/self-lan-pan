@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -150,15 +151,18 @@ func (p *TaskPool) run(t *model.Task) {
 		err = fmt.Errorf("未知任务类型 %s", t.Type)
 	}
 	if p.cancelled(t.ID) {
-		model.DB.Model(t).Updates(map[string]interface{}{"status": "canceled"})
+		// 取消后阶段提示必须清掉，否则界面会留着"正在下载分片 x/y"这类已经失效的文案
+		model.DB.Model(t).Updates(map[string]interface{}{"status": "canceled", "msg": ""})
 		return
 	}
 	if err != nil {
+		// 失败：error 写原因；msg 里最后一条阶段提示保留（详情里能看到停在哪一步）
 		model.DB.Model(t).Updates(map[string]interface{}{"status": "error", "error": err.Error()})
 		Notify(t.UserID, "task", "任务失败", taskTypeName(t.Type)+"任务失败："+truncateRunes(err.Error(), 200), t.ID)
 		return
 	}
-	model.DB.Model(t).Updates(map[string]interface{}{"status": "finished", "progress": 100})
+	// 成功：error/msg 都必须为空 —— 这里曾漏清 msg，导致任务已完成但界面仍显示"正在合并分片"
+	model.DB.Model(t).Updates(map[string]interface{}{"status": "finished", "progress": 100, "error": "", "msg": ""})
 	Notify(t.UserID, "task", "任务完成", taskTypeName(t.Type)+"任务完成："+taskTargetName(t), t.ID)
 }
 
@@ -183,11 +187,15 @@ func taskTypeName(typ string) string {
 // taskTargetName 从任务 Props 里提取可读的目标文件名/路径
 func taskTargetName(t *model.Task) string {
 	var props struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-		URL  string `json:"url"`
+		Name   string `json:"name"`
+		RTName string `json:"rtName"` // 实际落盘名（m3u8 默认名/BT 种子名），比用户填的 name 更可信
+		Path   string `json:"path"`
+		URL    string `json:"url"`
 	}
 	if err := json.Unmarshal([]byte(t.Props), &props); err == nil {
+		if props.RTName != "" {
+			return truncateRunes(props.RTName, 80)
+		}
 		if props.Name != "" {
 			return truncateRunes(props.Name, 80)
 		}
@@ -210,6 +218,14 @@ func (p *TaskPool) cancelled(id uint) bool {
 func (p *TaskPool) cancel(id uint) {
 	p.mu.Lock()
 	p.opts[id] = true
+	p.mu.Unlock()
+}
+
+// uncancel 清除取消标记。重试时必须调用：否则任务刚起跑就撞上上一轮留下的标记，
+// 直接被判成 canceled（状态"排队中"却永远不动）。
+func (p *TaskPool) uncancel(id uint) {
+	p.mu.Lock()
+	delete(p.opts, id)
 	p.mu.Unlock()
 }
 
@@ -297,6 +313,11 @@ func (p *TaskPool) runOffline(t *model.Task) error {
 		} else {
 			name = fmt.Sprintf("download_%d.bin", t.ID)
 		}
+	}
+	// 已有同名文件就改名（name_1、name_2…），不覆盖用户盘里已有的东西
+	name, err = uniqueFileName(d, props.Dest, name)
+	if err != nil {
+		return err
 	}
 	target, err := fscore.Join(props.Dest, name)
 	if err != nil {
@@ -609,6 +630,92 @@ func (p *TaskPool) accountQuota(t *model.Task, bytes *int64) {
 	}
 }
 
+// ---- 任务产物命名 ----
+
+// mediaDefaultExt 视频任务的默认扩展名。
+//
+// HLS 分片合并出来的其实是 MPEG-TS 流，这里按用户要求统一用 .mp4 命名
+//（VLC / PotPlayer / mpv / 手机播放器都按内容识别，能正常播；
+// Windows 自带「电影和电视」可能不认 —— 要改回 .ts 只需改这一个常量）。
+const mediaDefaultExt = ".mp4"
+
+// resolveOutName 生成任务产物文件名：
+//   - 用户填了名字 → 用他的（没有扩展名时补 defaultExt）
+//   - 没填 → "YYYYMMDD_NN" + defaultExt，NN = 目标目录里当天已有同款文件的最大编号 +1（两位）
+//
+// 非法名称直接报错，不静默改写：否则用户指定的名字落盘成别的样子，只会更让人困惑。
+func resolveOutName(d fscore.Driver, dir, userName, defaultExt string) (string, error) {
+	if n := strings.TrimSpace(userName); n != "" {
+		if strings.ContainsAny(n, `/\`) {
+			return "", fmt.Errorf("文件名不能包含路径分隔符（/ 或 \\）")
+		}
+		n = strings.TrimRight(n, " .") // Windows 会静默吃掉结尾空格与点
+		if n == "" {
+			return "", fmt.Errorf("文件名不能为空")
+		}
+		if path.Ext(n) == "" {
+			n += defaultExt
+		}
+		safe, err := fscore.SanitizeName(n)
+		if err != nil {
+			return "", err
+		}
+		return safe, nil
+	}
+	return nextDailyName(d, dir, defaultExt), nil
+}
+
+// nextDailyName "YYYYMMDD_NN<ext>"：NN 取目标目录里今天已有的最大编号 + 1（两位，超过 99 自然进位）
+func nextDailyName(d fscore.Driver, dir, ext string) string {
+	day := time.Now().Format("20060102")
+	maxN := 0
+	if ents, err := d.List(dir); err == nil {
+		for _, e := range ents {
+			if e.IsDir || !strings.HasPrefix(e.Name, day+"_") || !strings.EqualFold(path.Ext(e.Name), ext) {
+				continue
+			}
+			rest := strings.TrimSuffix(strings.TrimPrefix(e.Name, day+"_"), path.Ext(e.Name))
+			if n, err := strconv.Atoi(rest); err == nil && n > maxN {
+				maxN = n
+			}
+		}
+	}
+	return fmt.Sprintf("%s_%02d%s", day, maxN+1, ext)
+}
+
+// uniqueFileName 目录下已有同名文件时追加 _1/_2…（绝不覆盖既有文件）
+func uniqueFileName(d fscore.Driver, dir, name string) (string, error) {
+	ext := path.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	cand := name
+	for i := 1; ; i++ {
+		vp, err := fscore.Join(dir, cand)
+		if err != nil {
+			return "", err
+		}
+		if _, serr := d.Stat(vp); serr != nil {
+			return cand, nil // 不存在 → 可用
+		}
+		cand = fmt.Sprintf("%s_%d%s", base, i, ext)
+	}
+}
+
+// resetTaskProps 重试前清掉上一轮运行写入的字段（分片进度/码率/产物名/节点数），
+// 保留 url / dest / name / policyId 等真正的入参。
+func resetTaskProps(raw string) string {
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil || len(m) == 0 {
+		return raw
+	}
+	for _, k := range []string{"segDone", "segTotal", "variant", "rtName", "note", "seeds", "peers", "live"} {
+		delete(m, k)
+	}
+	if b, err := json.Marshal(m); err == nil {
+		return string(b)
+	}
+	return raw
+}
+
 // ---- Offline API ----
 
 type OfflineHandler struct{}
@@ -636,6 +743,18 @@ func (h *OfflineHandler) Create(c *gin.Context) {
 	dest, err := fscore.Clean(in.Dest)
 	if err != nil || dest == "" {
 		dest = "/"
+	}
+	// 文件名（可选）：这里只做校验，真正补扩展名/生成默认名在下发任务时按类型处理
+	// （m3u8 视频：没填 → YYYYMMDD_NN.mp4，没扩展名 → 补 .mp4；见 resolveOutName）
+	if in.Name = strings.TrimSpace(in.Name); in.Name != "" {
+		if strings.ContainsAny(in.Name, `/\`) {
+			dto.Fail(c, 400, "文件名不能包含路径分隔符（/ 或 \\）")
+			return
+		}
+		if _, jerr := fscore.Join(dest, in.Name); jerr != nil {
+			dto.Fail(c, 400, "文件名不合法："+jerr.Error())
+			return
+		}
 	}
 	if !x.perm.CanUsePolicy(in.PolicyID) && x.user.Role != "admin" {
 		dto.Fail(c, 403, "无权使用该存储")
@@ -696,6 +815,7 @@ func (h *OfflineHandler) List(c *gin.Context) {
 	dto.OK(c, items)
 }
 
+// Cancel 取消进行中的任务（执行体会在下一次检查点退出）
 func (h *OfflineHandler) Cancel(c *gin.Context) {
 	x := ctxOf(c)
 	id := parseUintParam(c, "id")
@@ -705,7 +825,64 @@ func (h *OfflineHandler) Cancel(c *gin.Context) {
 		return
 	}
 	pool.cancel(id)
-	model.DB.Model(&t).UpdateColumn("status", "canceled")
+	// msg 一并清掉：取消后界面不该再挂着"正在下载分片 x/y"这类已失效的阶段文案
+	model.DB.Model(&t).Updates(map[string]interface{}{"status": "canceled", "msg": ""})
+	dto.OK(c, nil)
+}
+
+// Retry 重试失败 / 已取消的任务：就地重置为排队并重新执行（不产生重复记录）。
+//
+// 必须显式 uncancel —— 上一轮若被取消过，取消标记还留在任务池里，
+// 不清掉的话新起的执行体第一次检查就自我了断，任务会永远停在"排队中"。
+func (h *OfflineHandler) Retry(c *gin.Context) {
+	x := ctxOf(c)
+	id := parseUintParam(c, "id")
+	var t model.Task
+	if err := model.DB.Where("id = ? AND user_id = ?", id, x.user.ID).First(&t).Error; err != nil {
+		dto.Fail(c, 404, "任务不存在")
+		return
+	}
+	if t.Status == "queued" || t.Status == "processing" {
+		dto.Fail(c, 400, "任务正在执行中，无需重试")
+		return
+	}
+	model.DB.Model(&t).Updates(map[string]interface{}{
+		"status": "queued", "progress": 0, "error": "", "msg": "",
+		"props": resetTaskProps(t.Props),
+	})
+	pool.uncancel(id)
+	// 重新取一次（Updates 不回写结构体），执行体需要带上最新的 Props/Status
+	if err := model.DB.First(&t, id).Error; err != nil {
+		dto.Fail(c, 500, "任务重试失败")
+		return
+	}
+	go pool.run(&t)
+	middleware.Audit(c, "offline", fmt.Sprintf("重试任务 #%d", t.ID))
+	dto.OK(c, t)
+}
+
+// Delete 删除任务记录（仅限已结束的任务）。
+//
+// 进行中的任务不给删：执行体还在跑，删了记录它照样会把文件写进网盘
+//（用户以为删了却冒出个文件）。要先取消再删除。
+func (h *OfflineHandler) Delete(c *gin.Context) {
+	x := ctxOf(c)
+	id := parseUintParam(c, "id")
+	var t model.Task
+	if err := model.DB.Where("id = ? AND user_id = ?", id, x.user.ID).First(&t).Error; err != nil {
+		dto.Fail(c, 404, "任务不存在")
+		return
+	}
+	if t.Status == "queued" || t.Status == "processing" {
+		dto.Fail(c, 400, "任务正在执行中：请先「取消」，再删除")
+		return
+	}
+	pool.uncancel(id)
+	if err := model.DB.Delete(&model.Task{}, t.ID).Error; err != nil {
+		dto.Fail(c, 500, "删除失败："+err.Error())
+		return
+	}
+	middleware.Audit(c, "offline", fmt.Sprintf("删除任务 #%d (%s)", t.ID, t.Type))
 	dto.OK(c, nil)
 }
 

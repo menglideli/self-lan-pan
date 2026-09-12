@@ -70,6 +70,13 @@ func (h *AdminHandler) PolicyCreate(c *gin.Context) {
 		dto.Fail(c, 400, "参数错误")
 		return
 	}
+	// 单用户私有部署：只支持挂载本机目录。云盘挂载（123云盘/阿里云盘/百度网盘/天翼云盘）
+	// 与其授权流程已整体移除，这里显式拒绝，避免旧客户端或手写请求又建出一条打不开的策略。
+	if t := strings.TrimSpace(in.Type); t != "" && t != "local" {
+		dto.Fail(c, 400, "只支持挂载本机磁盘目录（云盘挂载已移除）：type 需为 local")
+		return
+	}
+	in.Type = "local"
 	u := middleware.CurrentUser(c)
 	opts := "{}"
 	if in.Options != nil {
@@ -81,39 +88,37 @@ func (h *AdminHandler) PolicyCreate(c *gin.Context) {
 		letter = genPolicyLetter(in.Name)
 	}
 	p := model.Policy{Name: in.Name, Letter: letter, Type: in.Type, RootPath: in.RootPath, Options: opts, CreatedBy: u.ID}
-	if in.Type == "local" {
-		if in.RootPath == "" {
-			dto.Fail(c, 400, "本地存储必须填写根目录")
+	if in.RootPath == "" {
+		dto.Fail(c, 400, "必须填写要挂载的本机目录")
+		return
+	}
+	// 跨平台校验：必须为本机绝对路径；非 Windows 主机拒绝反斜杠，
+	// 防止 Linux 上粘贴 E:\x 这类路径被当作相对目录名静默建到 CWD 下
+	if runtime.GOOS != "windows" && strings.Contains(in.RootPath, "\\") {
+		dto.Fail(c, 400, "根目录路径不合法：Linux/macOS 请使用 / 分隔的绝对路径")
+		return
+	}
+	if !filepath.IsAbs(in.RootPath) {
+		if runtime.GOOS != "windows" || !filepath.IsAbs(filepath.FromSlash(in.RootPath)) {
+			dto.Fail(c, 400, "根目录必须是绝对路径（如 /data/storage）")
 			return
 		}
-		// 跨平台校验：必须为本机绝对路径；非 Windows 主机拒绝反斜杠，
-		// 防止 Linux 上粘贴 E:\x 这类路径被当作相对目录名静默建到 CWD 下
-		if runtime.GOOS != "windows" && strings.Contains(in.RootPath, "\\") {
-			dto.Fail(c, 400, "根目录路径不合法：Linux/macOS 请使用 / 分隔的绝对路径")
-			return
-		}
-		if !filepath.IsAbs(in.RootPath) {
-			if runtime.GOOS != "windows" || !filepath.IsAbs(filepath.FromSlash(in.RootPath)) {
-				dto.Fail(c, 400, "根目录必须是绝对路径（如 /data/storage）")
-				return
-			}
-		}
-		// 单用户私有部署：挂载的是「已有的本机文件夹」，不是预先规划的新存储目录。
-		// 原实现只调 fscore.NewLocal → os.MkdirAll，会把打错的路径静默建成空目录，
-		// 用户在网盘里看到一个空挂载点却不知道文件去哪了；这里要求目录必须已存在。
-		st, err := os.Stat(in.RootPath)
-		if err != nil {
-			dto.Fail(c, 400, "目录不存在或无法访问："+err.Error())
-			return
-		}
-		if !st.IsDir() {
-			dto.Fail(c, 400, "所选路径不是文件夹")
-			return
-		}
-		if _, err := fscore.NewLocal(in.RootPath); err != nil {
-			dto.Fail(c, 400, "根目录不可用："+err.Error())
-			return
-		}
+	}
+	// 单用户私有部署：挂载的是「已有的本机文件夹」，不是预先规划的新存储目录。
+	// 原实现只调 fscore.NewLocal → os.MkdirAll，会把打错的路径静默建成空目录，
+	// 用户在网盘里看到一个空挂载点却不知道文件去哪了；这里要求目录必须已存在。
+	st, err := os.Stat(in.RootPath)
+	if err != nil {
+		dto.Fail(c, 400, "目录不存在或无法访问："+err.Error())
+		return
+	}
+	if !st.IsDir() {
+		dto.Fail(c, 400, "所选路径不是文件夹")
+		return
+	}
+	if _, err := fscore.NewLocal(in.RootPath); err != nil {
+		dto.Fail(c, 400, "根目录不可用："+err.Error())
+		return
 	}
 	if err := model.DB.Create(&p).Error; err != nil {
 		// 唯一约束冲突（盘符重复）给出友好提示，避免把原始 SQLite 报错直接抛给前端
@@ -128,16 +133,39 @@ func (h *AdminHandler) PolicyCreate(c *gin.Context) {
 	dto.OK(c, p)
 }
 
+// policyPatchIn 编辑挂载用的入参：与新建不同，这里 name / type 都是可选的。
+// 早先直接复用 policyIn，而它把 name 和 type 都标了 binding:"required"，
+// 于是「只改挂载目录」的请求（前端编辑框不再回传 type）会先被判「参数错误」，
+// 校验分支根本进不去 —— 表现为改路径永远失败且看不出原因。
+type policyPatchIn struct {
+	Name     string            `json:"name"`
+	Letter   string            `json:"letter"`
+	Type     string            `json:"type"`
+	RootPath string            `json:"rootPath"`
+	Options  map[string]string `json:"options"`
+}
+
 func (h *AdminHandler) PolicyUpdate(c *gin.Context) {
 	var p model.Policy
 	if err := model.DB.First(&p, c.Param("id")).Error; err != nil {
 		dto.Fail(c, 404, "策略不存在")
 		return
 	}
-	var in policyIn
+	var in policyPatchIn
 	if err := c.ShouldBindJSON(&in); err != nil {
 		dto.Fail(c, 400, "参数错误")
 		return
+	}
+	// 云盘挂载已整体移除：即便旧客户端在编辑请求里带上云盘 type 也一并拒绝，
+	// 不能让一条已经写成 local 的策略被改回打不开的类型。
+	if t := strings.TrimSpace(in.Type); t != "" && t != "local" {
+		dto.Fail(c, 400, "只支持挂载本机磁盘目录（云盘挂载已移除）：type 需为 local")
+		return
+	}
+	// 名字留空 = 保持原值（编辑框允许只改目录，不能把挂载名清成空串）
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		name = p.Name
 	}
 	opts := p.Options
 	if in.Options != nil {
@@ -148,8 +176,30 @@ func (h *AdminHandler) PolicyUpdate(c *gin.Context) {
 	if letter == "" {
 		letter = p.Letter
 	}
+	// 改挂载目录同样要求是"已存在的本机绝对目录"（与新建同一套校验）：
+	// 否则一个手滑的路径改下来，挂载点会变成空白页，却看不出问题在哪。
+	rootPath := p.RootPath
+	if in.RootPath != "" && in.RootPath != p.RootPath {
+		np := strings.TrimSpace(in.RootPath)
+		if !filepath.IsAbs(np) || (runtime.GOOS != "windows" && strings.Contains(np, "\\")) {
+			dto.Fail(c, 400, "根目录必须是绝对路径")
+			return
+		}
+		if st, err := os.Stat(np); err != nil {
+			dto.Fail(c, 400, "目录不存在或无法访问："+err.Error())
+			return
+		} else if !st.IsDir() {
+			dto.Fail(c, 400, "所选路径不是文件夹")
+			return
+		}
+		if _, err := fscore.NewLocal(np); err != nil {
+			dto.Fail(c, 400, "根目录不可用："+err.Error())
+			return
+		}
+		rootPath = np
+	}
 	model.DB.Model(&p).Updates(map[string]interface{}{
-		"name": in.Name, "letter": letter, "root_path": in.RootPath, "options": opts,
+		"name": name, "letter": letter, "root_path": rootPath, "options": opts,
 		"status": orDefault(c.Query("status"), p.Status),
 	})
 	h.Site.Fs.Invalidate(p.ID)

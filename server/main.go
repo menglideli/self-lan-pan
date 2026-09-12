@@ -10,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"cloudpan/internal/config"
-	"cloudpan/internal/driver"
 	"cloudpan/internal/fscore"
 	"cloudpan/internal/handler"
 	"cloudpan/internal/middleware"
@@ -19,22 +18,30 @@ import (
 )
 
 func fsService(cfg *config.Config) *fscore.Service {
-	// 注册全部存储驱动（工厂统一为 策略+用户 签名；云盘忽略用户）
-	// 单用户私有部署：本地盘不再按用户拼子目录，策略的挂载根就是真实目录
+	// 存储驱动：单用户私有部署只支持「本机磁盘目录」一种（云盘驱动已整体移除）。
+	// 本地盘也不再按用户拼子目录，策略的挂载根就是真实目录。
 	fscore.RegisterDriver("local", func(p *model.Policy, _ *model.User) (fscore.Driver, error) {
 		return fscore.NewLocal(p.RootPath)
 	})
-	fscore.RegisterDriver("pan123", func(p *model.Policy, _ *model.User) (fscore.Driver, error) { return driver.NewPan123(p) })
-	fscore.RegisterDriver("aliyun", func(p *model.Policy, _ *model.User) (fscore.Driver, error) { return driver.NewAliyun(p) })
-	fscore.RegisterDriver("baidu", func(p *model.Policy, _ *model.User) (fscore.Driver, error) { return driver.NewBaidu(p) })
-	fscore.RegisterDriver("tianyi", func(p *model.Policy, _ *model.User) (fscore.Driver, error) { return driver.NewTianyi(p) })
 	return fscore.NewService(cfg.Sub("upload_tmp"), cfg.Sub("recycle"), cfg.Sub("thumbs"), cfg.Sub("ziptmp"))
+}
+
+// warnLegacyCloudPolicies 启动时点名"更早版本留下的云盘策略"：
+// 这类策略的驱动已不再注册，在网盘里只会看到一个打不开的挂载点，
+// 启动日志说清楚原因，用户才知道该去管理台卸载它。
+func warnLegacyCloudPolicies() {
+	var rows []model.Policy
+	model.DB.Where("type <> ? AND type <> ''", "local").Find(&rows)
+	for _, p := range rows {
+		log.Printf("[CloudPan] 存储策略 #%d %q 类型为 %s：该类型已不再支持，请在管理台「存储策略」里卸载", p.ID, p.Name, p.Type)
+	}
 }
 
 func main() {
 	cfg := config.Load()
 	model.InitDB(cfg.DataDir)
 	model.LoadAppCache()         // 应用中心：功能开关内存缓存
+	warnLegacyCloudPolicies()    // 旧版本遗留的云盘策略：启动时点名，免得用户对着打不开的挂载点发呆
 	handler.StartSystemMonitor() // NAS 系统监控采样器（仪表盘数据源）
 	gin.SetMode(gin.ReleaseMode)
 

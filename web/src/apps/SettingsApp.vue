@@ -127,7 +127,7 @@
               <option v-for="p in policies" :key="p.id" :value="p.id">{{ p.name }} ({{ p.letter }})</option>
             </select>
             <input class="input" v-model="offUrl" placeholder="HTTP 直链 / m3u8 视频 / .torrent 种子 / magnet: 磁力链" style="flex: 1; min-width: 260px" />
-            <input class="input" v-model="offName" placeholder="文件名(可选)" style="width: 150px" />
+            <input class="input" v-model="offName" placeholder="文件名(可选，留空自动命名)" style="width: 190px" />
             <input class="input" v-model="offReferer" placeholder="Referer(可选，防盗链站点用)" style="width: 200px" />
             <select class="input" v-model="offDest" style="width: 130px">
               <option value="/">根目录</option>
@@ -137,21 +137,33 @@
           </div>
           <div style="font-size: 11.5px; color: var(--text-3); margin-top: 8px; line-height: 1.8">
             • <b>HTTP 直链</b>：服务器代下载；若该地址实际返回 m3u8 清单会自动转成 m3u8 下载。<br>
-            • <b>m3u8 视频</b>：自动选最高码率 → 并发抓分片 → AES-128 自动解密 → 合并保存为 <code>.ts</code>（用 VLC / PotPlayer / 手机播放器播放）。<br>
-            • <b>.torrent / magnet:</b> 由内置 BT 引擎（DHT + 公共 tracker）下载，完成后自动导入所选磁盘。<br>
+            • <b>m3u8 视频</b>：自动选最高码率 → 并发抓分片 → AES-128 自动解密 → 合并保存为 <code>.mp4</code>（用 VLC / PotPlayer / 手机播放器播放）。文件名可自己填，留空则按「日期_序号」自动命名（如 <code>20260912_01.mp4</code>）。<br>
+            • <b>.torrent / magnet:</b> 由内置 BT 引擎（DHT + 公共 tracker）下载，完成后自动导入所选磁盘（文件名由种子决定）。<br>
             • 内网地址（如 NAS、内网媒体服务器）默认被安全策略拒绝，需在「管理控制台 → 站点设置」开启<span style="color: var(--text-2)">「允许离线下载访问内网地址」</span>。
           </div>
           <table class="file-list" style="position: static">
-            <thead><tr><th>文件</th><th>状态</th><th>进度</th><th>时间</th><th>操作</th></tr></thead>
+            <thead><tr><th>文件</th><th>状态</th><th>进度</th><th>时间</th><th style="width: 130px">操作</th></tr></thead>
             <tbody>
               <tr v-for="t in offTasks" :key="t.id">
-                <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis">{{ taskName(t) }}</td>
-                <td><span class="tag" :style="t.status === 'error' ? 'color:var(--danger)' : ''">{{ taskStatus(t.status) }}</span></td>
+                <td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis" :title="taskName(t)">{{ taskName(t) }}</td>
+                <td>
+                  <span class="tag" :style="t.status === 'error' ? 'color:var(--danger)' : ''">{{ taskStatus(t.status) }}</span>
+                  <!-- 阶段提示只在跑动时显示；失败原因只在失败时显示（后端任务结束会清空 msg） -->
+                  <div v-if="isRunning(t) && t.msg" style="font-size: 11px; color: var(--text-3); margin-top: 3px">{{ t.msg }}</div>
+                  <div v-if="t.status === 'error' && t.error" :title="t.error" style="font-size: 11px; color: var(--danger); margin-top: 3px; max-width: 240px; word-break: break-all">{{ t.error }}</div>
+                  <div v-if="t.status === 'finished' && taskNote(t)" style="font-size: 11px; color: #d08700; margin-top: 3px">{{ taskNote(t) }}</div>
+                </td>
                 <td style="width: 160px">
                   <div class="progress-track"><div class="progress-fill" :style="{ width: t.progress + '%' }"></div></div>
                 </td>
                 <td style="color: var(--text-3)">{{ new Date(t.createdAt).toLocaleTimeString() }}</td>
-                <td><button v-if="t.status === 'queued' || t.status === 'processing'" class="tool-btn danger" style="padding: 3px 8px" @click="cancelOffline(t)">取消</button></td>
+                <td>
+                  <button v-if="isRunning(t)" class="tool-btn danger" style="padding: 3px 8px" @click="cancelOffline(t)">取消</button>
+                  <template v-else>
+                    <button class="tool-btn" style="padding: 3px 8px" @click="retryOffline(t)">重试</button>
+                    <button class="tool-btn danger" style="padding: 3px 8px" @click="deleteOffline(t)">删除</button>
+                  </template>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -208,11 +220,17 @@ const offPolicyId = ref(0)
 let pollTimer = 0
 
 function taskName(t: any) {
-  try { const p = JSON.parse(t.props); return p.name || p.url } catch { return t.props }
+  try { const p = JSON.parse(t.props); return p.rtName || p.name || p.url } catch { return t.props }
+}
+// 完成后的补充说明（如"有 3 个分片下载失败已跳过"）存在 props.note，不在 msg 里
+function taskNote(t: any) {
+  try { return JSON.parse(t.props).note || '' } catch { return '' }
 }
 function taskStatus(s: string) {
   return ({ queued: '排队中', processing: '下载中', finished: '完成', error: '失败', canceled: '已取消' } as any)[s] || s
 }
+// 进行中 = 只有 queued/processing 会“动”；阶段提示与取消按钮都以此为界
+function isRunning(t: any) { return t.status === 'queued' || t.status === 'processing' }
 async function loadOffline() {
   try {
     policies.value = await fsApi.policies()
@@ -232,6 +250,13 @@ async function addOffline() {
   } catch (e: any) { toast.error(e.message) }
 }
 async function cancelOffline(t: any) {
+  try { await apost(`/offline/${t.id}/cancel`, {}); loadOffline() } catch (e: any) { alert(e.message) }
+}
+async function retryOffline(t: any) {
+  try { await apost(`/offline/${t.id}/retry`, {}); loadOffline() } catch (e: any) { alert(e.message) }
+}
+async function deleteOffline(t: any) {
+  if (!confirm(`删除任务 #${t.id} 的记录？（已下载好的文件不受影响）`)) return
   try { await adel(`/offline/${t.id}`); loadOffline() } catch (e: any) { alert(e.message) }
 }
 // 个性化（站点主题/壁纸/深色）为管理员全局设置：仅管理员可见此 tab，

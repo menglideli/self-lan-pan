@@ -23,7 +23,7 @@ CloudPan 是一个用 **Go（Gin + GORM + SQLite）** 与 **Vue 3 + TypeScript +
 
 内置应用（11 个）：文件资源管理器、此电脑、回收站、记事本、图片查看器、媒体播放器、媒体中心（可安装）、任务中心、应用中心、设置、管理控制台。
 
-网盘核心对齐主流网盘：分块上传 + 断点续传 + SHA-256 秒传、下载（单文件 / 多选 / 目录 zip 流式）、公开分享（提取码 / 有效期 / 次数 / 端到端加密）、回收站、压缩解压、离线下载（HTTP + BT，SSRF 三层防护）、WebDAV、版本管理、缩略图、全局搜索、审计日志。存储层为**驱动注册表架构**（借鉴 Cloudreve），本地目录与 123 云盘 / 阿里云盘 / 百度网盘 / 天翼云盘（实验性）即插即用。
+网盘核心对齐主流网盘：分块上传 + 断点续传 + SHA-256 秒传、下载（单文件 / 多选 / 目录 zip 流式）、公开分享（提取码 / 有效期 / 次数 / 端到端加密）、回收站、压缩解压、离线下载（HTTP + BT + m3u8/HLS，SSRF 三层防护）、WebDAV、版本管理、缩略图、全局搜索、审计日志。存储层为**驱动注册表架构**（借鉴 Cloudreve），本版本只注册**本机磁盘目录**一个驱动 —— 云盘驱动（123 / 阿里 / 百度 / 天翼）已随单用户私有化裁剪整体移除。
 
 ## Project Overview
 
@@ -82,14 +82,15 @@ The drive core matches mainstream cloud drives: chunked upload with resume + SHA
 - WebDAV 路径段用**挂载名**（重名自动加 `-盘符` 后缀）；数据库里的盘符字段只在兼容旧写法时用（`/dav/M/…`），界面永不暴露
 
 **网盘核心**
-- 存储策略抽象（借鉴 Cloudreve 设计）：本地目录 + 123 云盘 + 阿里云盘 + 百度网盘（默认只读）+ 天翼云盘（实验性），驱动注册表架构，新后端即插即用
+- 存储策略：**只挂本机磁盘目录**（单用户私有部署刻意收口）。云盘驱动（123 / 阿里 / 百度 / 天翼）与配套的扫码授权流程已整体移除，`server/internal/driver/` 整包删除；建策略时传云盘类型会被后端直接拒绝（`type` 只接受 `local`），管理台也没有对应入口
 - 文件管理：新建 / 重命名 / 移动 / 复制 / 删除（入回收站）/ 搜索 / 属性 / 收藏快速访问；网格与列表双视图；完整右键菜单
 - 上传：**分块上传 + 断点续传 + SHA-256 秒传**（硬链接去重 + 副本账本）
 - 下载：单文件直下、多选 / 目录 zip 打包流式下载；图片 / 视频 / 音频 Range 流式预览
 - 分享：提取码 / 有效期 / 剩余下载次数 / 预览开关 / 浏览下载计数；公开分享页；**端到端加密分享**（属主浏览器内加密，服务端只见密文）
 - 回收站：还原 / 彻底删除 / 清空（**永久保留，无自动清理**）
 - 压缩解压：右键压缩为 zip / 解压到当前目录（含子目录安全校验）
-- 离线下载：HTTP(S) 直链与 BT 磁力，服务器代下载入网盘，DB 任务队列重启自动恢复，**SSRF 三层防护**
+- 离线下载：HTTP(S) 直链、BT 磁力与 **m3u8（HLS）**，服务器代下载入网盘，DB 任务队列重启自动恢复，**SSRF 三层防护**
+- 离线任务可自诊断：任务中心 / 设置 / 文件管理器三处都能看**任务详情**（原始链接、保存位置、文件名、分片进度、封面分辨率、Referer、失败原因）、**重试**失败任务、**删除**任务记录；文件名可自定义，不填则自动命名成 `YYYYMMDD_NN.mp4`（当天从 `_01` 递增），同名不覆盖而是追加 `_1`/`_2`
 - WebDAV：**一个统一入口 `/dav/` 就是全部挂载**（不用一个个加）；单个挂载也能单独挂 `/dav/<挂载名>/`；独立应用密码，可挂载进 Windows 资源管理器 / 手机（内网手机访问走这条）
   - **手机上怎么填**：先在「设置 → WebDAV 独立密码」里设一个密码（**与登录密码是两回事**，没设之前任何账号都连不上，服务端会明确回「请在设置中先行设置」），然后在手机端 WebDAV 客户端里填：地址 `http://<本机内网IP>:18322/dav/`、账号 `admin`、密码＝刚设的独立密码。填单个挂载就把地址改成 `…/dav/<挂载名>/`
   - 统一根 `/dav/` 是**只读的索引层**（只列出挂载点，不能往里写）；要传文件请进到 `/dav/<挂载名>/` 里面
@@ -100,7 +101,7 @@ The drive core matches mainstream cloud drives: chunked upload with resume + SHA
 - 全局搜索、站内通知、审计日志
 
 **管理控制台**
-- 仪表盘、存储策略、分享管理、任务监控、站点设置、系统更新、审计日志、通知
+- 仪表盘、存储策略、分享审计、任务监控、站点设置、审计日志、通知记录
 
 ---
 
@@ -169,7 +170,6 @@ cloudpan/
 │       ├── apps/                      # 系统功能清单（应用中心的数据源）
 │       ├── middleware/                # 鉴权、功能门控、限流、安全响应头
 │       ├── fscore/                    # 存储驱动接口+注册表、路径安全、分块上传、秒传、zip、SSRF
-│       ├── driver/                    # 123 / 阿里 / 百度 / 天翼 云盘驱动
 │       ├── handler/                   # auth/fs/upload/localdir/share/recycle/admin/webdav/tasks
 │       └── web/                       # go:embed 前端产物
 └── web/                               # Vue 3 + TS + Vite 前端
@@ -194,7 +194,6 @@ cloudpan/
 │       ├── apps/                      # system feature manifest (App Center data source)
 │       ├── middleware/                # auth, feature gates, rate limiting, security headers
 │       ├── fscore/                    # storage driver interface+registry, path safety, chunked upload, dedup, zip, SSRF guard
-│       ├── driver/                    # 123Pan / Aliyun / Baidu / Tianyi cloud drivers
 │       ├── handler/                   # auth/fs/upload/localdir/share/recycle/admin/webdav/tasks
 │       └── web/                       # go:embed frontend build output
 └── web/                               # Vue 3 + TS + Vite frontend
@@ -274,81 +273,27 @@ Nginx: `location / { proxy_pass http://127.0.0.1:18322; proxy_set_header Host $h
 
 ---
 
-## 云盘接入与扫码绑定教程
+## 挂载本机目录（唯一的存储类型）
 
-支持的云盘：**123云盘**（官方开放平台）、**阿里云盘**（开放平台 OAuth）、**百度网盘**（官方 API，OAuth）、**天翼云盘**（Cookie，实验性）。
-阿里云盘 / 百度网盘支持**手机扫二维码一键绑定**（参考 AList 的挂载体验）：管理台把厂商授权页渲染成二维码，手机扫码→登录确认→厂商重定向回系统回调接口→token 自动落库，全程无需复制粘贴。
+本版本**只支持挂载本机磁盘目录**。云盘驱动（123云盘 / 阿里云盘 / 百度网盘 / 天翼云盘）与配套的扫码授权流程已整体移除：`server/internal/driver/` 整包删除，`/api/cloud/auth-url|exchange|status|callback` 四个接口全部下线（访问返回 404），建策略时传云盘类型会被后端直接拒绝。
 
-### 通用前置：配置「公开地址」
+1. 管理控制台 → 存储策略 → **挂载本机目录**
+2. 填一个**已存在**的绝对路径（如 `E:\媒体\电影`）。也可以先在文件管理器里进到该目录，再点工具栏「挂载文件夹」用浏览式选择器挑
+3. 列表里点「**测通**」验证目录可读 —— 目录被删掉后会**明确报错**，不会被悄悄重建出来再谎报"正常"
+4. 手机 / 其他电脑走 WebDAV：地址用列表里那行 `WebDAV /dav/<挂载名>/`（点一下会让你选本机地址）
 
-扫码绑定依赖厂商把手机浏览器重定向回本系统（`<公开地址>/api/cloud/callback`），因此**手机必须能访问该地址**：
+> **从旧版本升级**：数据库里可能残留云盘类型的策略。服务端启动日志会点名列出，管理台会把它标注为「已不支持」—— 请到存储策略页把它**卸载**掉。WebDAV 索引页仍会如实说明"另有 N 个云盘挂载不经 WebDAV"，就是这个原因。
 
-1. 管理控制台 → 站点设置 → **公开地址**，填写手机可访问的地址（如 `https://pan.example.com` 或内网 `http://192.168.1.10:18322`）
-2. 纯内网部署：手机与服务器处于同一局域网，填内网 IP 即可
-3. 公网部署：域名需能解析到服务器（含反向代理）
-4. 手机完全不可达本站时，可改用对话框内的「粘贴授权码」回退模式（oob 授权页直接显示授权码，人工粘贴）
+## Mounting a Local Directory (the only storage type)
 
-### 阿里云盘（扫码绑定）
+This build **only mounts local directories**. The cloud-drive backends (123Pan / Aliyun Drive / Baidu Wangpan / Tianyi Cloud) and their QR-scan authorization flows have been removed entirely: the whole `server/internal/driver/` package is gone, `/api/cloud/auth-url|exchange|status|callback` are down (they return 404), and creating a policy with a cloud `type` is rejected by the backend.
 
-1. 打开 <https://open.alipan.com>（阿里云盘开放平台），注册开发者账号
-2. 「应用管理」→ 创建应用，获得 **ClientID / ClientSecret**
-3. CloudPan 管理控制台 → 存储策略 → **挂载存储** → 类型选「阿里云盘」→ 填入 ClientID/ClientSecret
-4. 点「**扫码授权**」→ 对话框出现二维码 → 用**阿里云盘 App**（或手机浏览器）扫描二维码
-5. 手机上登录阿里云盘账号并确认授权 → 手机页面显示「绑定成功」
-6. 管理台对话框 3 秒内自动检测到绑定、token 自动填入 → 点「挂载」保存 → 列表「测通」验证
-7. 此后 access_token 自动续期（refresh_token 轮换后自动落库），长期有效
+1. Admin Console → Storage Policies → **Mount Local Directory**
+2. Enter an **existing** absolute path (e.g. `E:\Media\Movies`). You can also open that folder in the file manager first and use "Mount folder" in the toolbar to pick it with a browser-style dialog.
+3. Click **test** in the list to verify the directory is readable — if it was deleted, the test reports an error instead of silently recreating it and claiming "all good".
+4. For phones / other computers over WebDAV, use the `WebDAV /dav/<mount name>/` address shown in the list (clicking it lets you pick a local NIC address).
 
-### 百度网盘（扫码绑定）
-
-1. 打开 <https://console.bce.baidu.com>（百度智能云控制台）→ 「百度应用开放体系」创建应用，获得 **AppKey / SecretKey**
-2. **在应用配置里登记回调地址**：`<本站公开地址>/api/cloud/callback`（百度要求回调地址预先登记，必须与站点设置一致）
-3. CloudPan 管理控制台 → 存储策略 → 挂载存储 → 类型选「百度网盘」→ 填入 AppKey/SecretKey
-4. 点「**扫码授权**」→ 手机扫二维码 → 登录百度账号并确认授权 → 自动回填
-5. 保存 → 「测通」验证
-6. 说明：**上传/写操作**（新建/上传/移动/删除）需向百度申请接口白名单，未获批前为**只读挂载**（浏览/预览/下载/秒传不受限）；token 自动滚动续期（30 天有效期自动刷新）
-
-### 123云盘 / 天翼云盘
-
-- **123云盘**：<https://www.123pan.com/developer> 注册开发者 → 创建应用 → 填入 ClientID/ClientSecret → 挂载 → 测通（无需 OAuth 跳转）
-- **天翼云盘**（实验性，社区逆向 Cookie，随时可能失效）：电脑浏览器登录天翼云盘网页版 → F12 复制 Cookie 整串填入
-
-## Cloud Storage Backends & QR-Scan Binding
-
-Supported: **123Pan** (official open platform), **Aliyun Drive** (open-platform OAuth), **Baidu Wangpan** (official API, OAuth), **Tianyi Cloud** (cookie, experimental).
-Aliyun Drive / Baidu Wangpan support **one-click binding by scanning a QR code with your phone** (AList-style mounting experience): the admin console renders the vendor's OAuth authorization page as a QR code — scan with your phone → log in and confirm → the vendor redirects back to the system's callback endpoint → tokens are stored automatically, with zero copy-paste.
-
-### Prerequisite: configure the "Public URL"
-
-QR binding relies on the vendor redirecting the phone's browser back to `<public-url>/api/cloud/callback`, so **the phone must be able to reach that address**:
-
-1. Admin Console → Site Settings → **Public URL** — set an address reachable from your phone (e.g. `https://pan.example.com`, or the LAN IP `http://192.168.1.10:18322` for LAN deployments)
-2. LAN-only deployment: put the phone on the same network and use the LAN IP
-3. Public deployment: the domain must resolve to the server (reverse proxy included)
-4. If your phone cannot reach the site at all, use the dialog's "paste the authorization code" fallback (the oob authorization page displays the code directly)
-
-### Aliyun Drive (QR binding)
-
-1. Go to <https://open.alipan.com>, register a developer account
-2. Create an app under App Management — note the **ClientID / ClientSecret**
-3. CloudPan Admin Console → Storage Policies → **Mount** → type "Aliyun Drive" → fill in ClientID/ClientSecret
-4. Click **Scan & Authorize** → a QR code appears → scan it with the **Aliyun Drive app** (or a phone browser)
-5. Log in and confirm on the phone → the phone shows "binding succeeded"
-6. The dialog detects the binding within ~3s and fills in the token automatically → click Mount to save → verify with "test connection"
-7. access_token auto-renews from then on (rotated refresh tokens are persisted), so the mount stays valid long-term
-
-### Baidu Wangpan (QR binding)
-
-1. Go to <https://console.bce.baidu.com> → create an app under the Baidu open platform — note the **AppKey / SecretKey**
-2. **Register the callback URL in the app settings**: `<your-public-url>/api/cloud/callback` (Baidu requires callbacks to be pre-registered; it must match the site setting)
-3. Admin Console → Storage Policies → Mount → type "Baidu Wangpan" → fill in AppKey/SecretKey
-4. Click **Scan & Authorize** → scan with your phone → log in to Baidu and confirm → tokens fill in automatically
-5. Save → verify with "test connection"
-6. Note: **write operations** (mkdir / upload / move / delete) require a Baidu API allow-list approval; until granted the mount is **read-only** (browsing / preview / download / instant-upload dedup are unaffected). Tokens auto-renew (30-day access tokens are refreshed automatically).
-
-### 123Pan / Tianyi Cloud
-
-- **123Pan**: <https://www.123pan.com/developer> → register → create an app → fill in ClientID/ClientSecret → Mount → test (no OAuth redirect needed)
-- **Tianyi Cloud** (experimental, community-reverse-engineered cookie, may break at any time): log in to the Tianyi web drive in a desktop browser → copy the full Cookie string via F12 → paste it in
+> **Upgrading from an older version**: cloud-type policies may still be present in the database. The server logs them by name at startup and the admin console marks them "no longer supported" — unmount them from the Storage Policies page. The WebDAV index page still states "N cloud mounts are not reachable over WebDAV" for exactly this reason.
 
 ---
 
@@ -356,6 +301,20 @@ QR binding relies on the vendor redirecting the phone's browser back to `<public
 
 > 每次更新推送时在此追加条目（中文 + 英文），最新在上。
 > Every release appends entries here (Chinese + English), newest first.
+
+### 2026-09-12（真机反馈 5 件事：m3u8 命名 / 残留提示 / 任务详情重试删除 / 存储策略收口 / 测试证据清理）
+
+- **m3u8 下载的文件名现在能自己定，不填也有合理默认**：离线对话框与任务中心都新增「文件名」输入框（BT 磁力任务不显示 —— 它落的是一整个种子目录，起名没有意义）。规则收敛到 `resolveOutName()` 一处：填了就按你的名字（没写扩展名自动补 `.mp4`；含 `/`、`\` 直接 400 拒绝，不会把文件写到别的目录去）；没填则自动命名 **`YYYYMMDD_NN.mp4`**（`NN` = 当天该目录下已有的最大编号 + 1，从 `_01` 起、两位补零、超 99 自然进位）。产物扩展名统一 `.mp4`（此前 HLS 合并出来的是 `.ts`，Windows 上不少播放器不认；VLC / PotPlayer / mpv 按内容识别，不受影响）。
+- **同名文件不再被覆盖**：`uniqueFileName()` 在离线下载与 m3u8 两条链路都生效，目标目录已有同名时自动追加 `_1` / `_2`。
+- **修「任务已经完成，任务中心却一直显示『正在合并分片』」**：根因是**运行期阶段提示与失败原因共用同一个 `error` 列** —— 任务跑完后最后一句阶段提示仍留在列里，前端只能原样显示，于是一个 `finished` 的任务永远挂着「正在合并分片」。现在拆成两列：`Msg`（运行中的阶段提示，任务一结束必须清空）与 `Error`（**只在失败时写入**的失败原因）。三层防御保证：① 新增 `Task.Msg` 列；② `TaskPool.run()` 的成功/取消分支同时清 `Msg`（成功还清 `Error`）；③ 前端只在 `queued/processing` 时展示 `msg`，只在 `error` 状态展示 `error`。
+- **离线任务终于能看详情 / 重试 / 删除**：此前 `DELETE /api/offline/:id` **实际执行的是取消**，于是失败任务永远删不掉。现已拆成三个独立动作 —— `POST /api/offline/:id/cancel`（取消）、`POST /api/offline/:id/retry`（重试）、`DELETE /api/offline/:id`（删除记录）。重试会先 `uncancel()` 清掉上一轮留下的取消标记（不清的话新执行体第一次检查就自我了断，表现为"状态排队中但永远不动"），再清空上一次的进度 / 分片 / 阶段提示等运行态字段后重新入队；**跑动中的任务不允许删除**（否则记录没了、文件照样落盘）。任务中心、设置页、文件管理器三处都能打开**详情面板**：原始链接、保存位置、文件名、分片进度、封面分辨率、种子与节点数、Referer、创建与更新时间、阶段提示、备注、失败原因，附「复制链接 / 重试 / 删除记录」。
+- **管理控制台存储策略只剩「挂载本机目录」**：挂载对话框不再出现云盘选项、类型下拉与二维码授权面板（类型固定为禁用的只读框），云盘驱动整包与 `/api/cloud/*` 四个接口全部删除。后端同时收口：`PolicyCreate` / `PolicyUpdate` 传非 `local` 的 `type` 一律 400，旧客户端或手写请求也造不出打不开的策略。「测通」改为**真 Stat + List**（原先直接 `fscore.NewLocal` 会 `MkdirAll`，把已经被删掉的挂载目录悄悄重建出来，然后报「连通正常」）。
+- **顺带修掉一个真 bug（探针抓到的，不是用户报的）**：编辑挂载时只要没回传 `type` 就会被判「参数错误」（`policyIn` 把 `type` 标了 `binding:"required"`，而编辑框不会再送它），于是"改挂载目录"永远失败且看不出原因。已拆出独立的 `policyPatchIn`，`name` / `type` 均可选，且 `name` 留空保持原值而不是清成空串。
+- **决策收敛（之前挂着没定的三件事）**：`docs/test-evidence/` 已清理（13 个文件）；**手机端前端不做** —— 手机走 WebDAV 足够；**媒体中心暂时用不上**，应用保留、不作为动线。
+- **验证**：`probe-m3u8.mjs` **48/48**（扩自 28：追加默认命名、同日序号递增、自定义名补/不补扩展名、同名不覆盖、路径分隔符拒绝、完成态不残留 `msg`、失败原因落在 `error` 列、重试真重跑，以及任务中心 UI 的详情面板与文件名输入框）、`probe-offline.mjs` **22/22**（扩自 11：cancel/retry/delete 三动作分离、跑动中禁止删除、重试清空运行态、同名不覆盖）、`probe-policy.mjs` **26/26**（新增：云盘类型必被拒且**拒绝原因**正确、目录不存在/非绝对路径/指向文件均被拒、「测通」在目录被删后必须报错且不偷偷重建、`/api/cloud/*` 四路由 404、挂载对话框无云盘入口）；回归 `smoke.mjs` **61/61**、`probe-webdav.mjs` **45/45**、`probe-phone.mjs` **40/40**、`ui.mjs` **36/36**、`probe-addr.mjs` **27/27**、`probe-scroll.mjs` **13/13**、`probe-dav-root.mjs` 全部 4xx 且目录内容未丢 —— **合计 318 条断言全绿**；`go build ./...` / `build.bat` 均 exit 0，并已复核 exe 时间戳新于最新源文件。
+- **反向变异（4 次，全部精确命中）**：① 成功分支不再清 `msg` → `probe-m3u8` **恰好 3 条** FAIL，实测值就是 `msg="正在合并分片..." err=""`，**用户报的症状被完整复现**；② 默认命名 `YYYYMMDD_NN` 改成 `YYYYMMDD-NN` → **恰好 3 条** FAIL；③ 去掉云盘类型拦截 → `probe-policy` **恰好 4 条** FAIL；④ 同前，专测 `probe-webdav` 那条断言 —— **第 1 次 0 命中**（原断言只查 `code !== 0`，被 `rootPath` 为空产生的无关 400 蒙混），收紧成"拒绝原因必须含「云盘挂载已移除」"后重跑 **恰好 1 条** FAIL、其余 44 条 PASS。全部已还原并复跑全绿。
+- **Offline task upgrades: custom m3u8 filenames, no stale progress text, task detail/retry/delete, storage policies narrowed to local only.** The m3u8 downloader now accepts a user-supplied filename from both the offline dialog and the task center (hidden for torrents, where the output is a whole directory); a name without an extension gets `.mp4` appended, path separators are rejected with a 400, and when no name is given the output is auto-named `YYYYMMDD_NN.mp4` (`NN` = highest existing number for the day + 1, zero-padded). All HLS output is now `.mp4` instead of `.ts`, and `uniqueFileName()` prevents overwriting an existing file by appending `_1`/`_2`. The stale "merging segments…" text was caused by **stage messages and failure reasons sharing the same `error` column** — the last stage message stayed in the row forever and the UI rendered it verbatim, so a finished task looked stuck; the two are now separate columns (`Msg` for in-flight stage hints, `Error` written only on failure) with the stage message cleared when the task ends and the UI showing `msg` only while queued/processing. `DELETE /api/offline/:id` used to actually *cancel*, so failed tasks could never be removed; it is now split into `POST …/cancel`, `POST …/retry` and `DELETE …/:id` (retry clears the previous cancel flag and resets run-time props first; deleting a running task is refused). All three UIs gained a **detail panel** (source URL, destination, filename, segment progress, resolution, seeds/peers, Referer, timestamps, stage hint, note, failure reason) with retry and delete. Storage policies are now **local directories only**: the cloud-type selector, mount templates and QR-authorization panel are gone from the dialog, the whole `server/internal/driver/` package and the four `/api/cloud/*` routes were removed, and the backend rejects any non-`local` `type` on create/update. The "test" button now does a real `Stat` + `List` — it previously called `fscore.NewLocal`, which `MkdirAll`s, silently recreating a deleted mount directory and then reporting "all good". A probe-caught bug was also fixed: `PolicyUpdate` reused the create-time `policyIn` struct whose `type` field was `binding:"required"`, so editing a mount without resending `type` always failed with "invalid parameters" before any validation ran. Verified by 318 green assertions across 10 probes plus **four reverse mutations**, each landing exactly on its target assertion (the mutation that dropped the `msg` reset reproduced the user's exact `msg="正在合并分片..."` symptom on a finished task).
+
 
 ### 2026-09-11（离线下载增强：m3u8 / 失败看得见 / 多网卡地址 + 文件列表滚动）
 

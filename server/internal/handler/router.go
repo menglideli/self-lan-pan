@@ -97,17 +97,21 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		// 转存：公开分享内容一键保存到自己账号（登录态）
 		ug.POST("/s/:token/save", sh.SaveToDrive)
 
-		// 云盘授权（管理员专属：涉及云盘凭据绑定/token 交换，普通用户无权限操作存储策略）
-		ca := &CloudAuth{Site: site}
-		ug.GET("/cloud/auth-url", middleware.AdminOnly(), ca.AuthURL)
-		ug.POST("/cloud/exchange", middleware.AdminOnly(), ca.Exchange)
-		ug.GET("/cloud/status", middleware.AdminOnly(), ca.Status)
+		// 存储策略连通性探测（管理台「测通」）。
+		// 原来这里是 /cloud/status 与云盘 OAuth 三兄弟（auth-url / exchange / callback）；
+		// 单用户私有部署只挂本机目录后，授权流程整体移除，只留下"这个挂载点还活着吗"。
+		pc := &PolicyCheck{}
+		ug.GET("/policies/status", middleware.AdminOnly(), pc.Status)
 
 		// 离线下载（HTTP 或 BT 任一启用即放行）
 		off := &OfflineHandler{}
 		ug.POST("/offline", middleware.AppGateAny("offline_http", "bt"), off.Create)
 		ug.GET("/offline", off.List)
-		ug.DELETE("/offline/:id", off.Cancel)
+		// 取消 / 重试 / 删除三个动作分开：DELETE 是"删除记录"，
+		// 取消是"停下正在跑的"——早先 DELETE 被当成取消用，任务永远删不掉。
+		ug.POST("/offline/:id/cancel", off.Cancel)
+		ug.POST("/offline/:id/retry", off.Retry)
+		ug.DELETE("/offline/:id", off.Delete)
 
 		// 站内通知（每用户隔离，受「站内通知」功能门控）
 		notify := &NotifyHandler{}
@@ -123,11 +127,6 @@ func Setup(r *gin.Engine, cfg *config.Config, site *SiteHandler) {
 		ug.GET("/apps", site.AppList)
 
 	}
-
-	// 云盘 OAuth 回调（公开路由：厂商把用户浏览器重定向回这里，此时浏览器未必登录本系统；
-	// 安全靠 HMAC 签名 state 而非登录态——state 绑定策略 ID/类型/回调地址，30 分钟过期）
-	ca2 := &CloudAuth{Site: site}
-	api.GET("/cloud/callback", ca2.Callback)
 
 	// 直链提取：签发需登录，访问免登录
 	dlh := &DLHandler{Site: site}

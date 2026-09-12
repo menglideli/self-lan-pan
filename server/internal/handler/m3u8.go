@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -63,11 +62,14 @@ type m3u8Props struct {
 	UA       string `json:"ua,omitempty"`
 	Threads  int    `json:"threads,omitempty"`
 	// 运行时回写展示字段
-	RTName   string `json:"rtName,omitempty"`
+	RTName   string `json:"rtName,omitempty"` // 实际落盘名（用户填的 / YYYYMMDD_NN.mp4）
 	SegDone  int    `json:"segDone,omitempty"`
 	SegTotal int    `json:"segTotal,omitempty"`
 	Variant  string `json:"variant,omitempty"`
 	Live     bool   `json:"live,omitempty"`
+	// Note 任务成功后的补充说明（如"有 3 个分片失败已跳过"）。
+	// 不能塞进 Task.Msg：那个字段在任务结束时会被清空，否则界面会一直显示失效的阶段提示。
+	Note string `json:"note,omitempty"`
 }
 
 // ---- playlist 模型 ----
@@ -588,23 +590,21 @@ func (p *TaskPool) runM3U8Task(t *model.Task, props m3u8Props, preloaded, preloa
 	props.Live = !pl.HasEnd
 	p.saveAnyProps(t.ID, props)
 	if props.Live {
-		p.setTaskMsg(t.ID, fmt.Sprintf("该清单无 #EXT-X-ENDLIST（直播/事件流），仅保存本次抓取到的 %d 个分片", len(pl.Segs)))
+		// 直播/事件流的这个事实在任务结束后依然有意义 → 写进 props.Note 长期保留
+		props.Note = fmt.Sprintf("该清单无 #EXT-X-ENDLIST（直播/事件流），只保存了本次抓取到的 %d 个分片", len(pl.Segs))
+		p.saveAnyProps(t.ID, props)
+		p.setTaskMsg(t.ID, props.Note)
 	}
 
-	// 输出文件名
-	name := strings.TrimSpace(props.Name)
-	if name == "" {
-		bn := ""
-		if u, e := url.Parse(props.URL); e == nil {
-			bn = strings.TrimSuffix(path.Base(u.Path), path.Ext(u.Path))
-		}
-		if bn == "" || bn == "." || bn == "/" {
-			bn = fmt.Sprintf("video_%d", t.ID)
-		}
-		name = bn
+	// 输出文件名：用户填了就用他的，没填就用「YYYYMMDD_NN」；没有扩展名一律补 .mp4
+	name, err := resolveOutName(d, props.Dest, props.Name, mediaDefaultExt)
+	if err != nil {
+		return err
 	}
-	if !strings.HasSuffix(strings.ToLower(name), ".ts") {
-		name += ".ts"
+	// 与既有文件同名时自动改名为 name_1.mp4，绝不覆盖用户盘里的东西
+	name, err = uniqueFileName(d, props.Dest, name)
+	if err != nil {
+		return err
 	}
 	props.RTName = name
 	p.saveAnyProps(t.ID, props)
@@ -795,8 +795,17 @@ func (p *TaskPool) runM3U8Task(t *model.Task, props m3u8Props, preloaded, preloa
 		return fmt.Errorf("写入失败: %w", err)
 	}
 	addQuota(t.UserID, written)
+	// 有分片失败时的说明写进 props.Note（不是 Task.Msg —— 那个字段在 run() 成功分支里会被清空）
 	if softErr > 0 {
-		p.setTaskMsg(t.ID, fmt.Sprintf("已完成（%d 个分片失败已跳过，共 %d 个）", softErr, len(pl.Segs)))
+		note := fmt.Sprintf("有 %d/%d 个分片下载失败已跳过，产物可能缺段", softErr, len(pl.Segs))
+		if props.Note != "" {
+			props.Note += "；" + note
+		} else {
+			props.Note = note
+		}
+		props.SegDone = done
+		props.SegTotal = len(pl.Segs)
+		p.saveAnyProps(t.ID, props)
 	}
 	return nil
 }

@@ -378,12 +378,12 @@
       <div class="dialog" style="width: 480px">
         <h3>离线下载到「{{ currentPolicy?.name }}{{ path === '/' ? '' : path }}」</h3>
         <div class="row">
-          <label>下载链接（HTTP 直链 / 磁力 magnet: / .torrent 种子）</label>
+          <label>下载链接（HTTP 直链 / m3u8 视频 / .torrent 种子 / magnet: 磁力）</label>
           <input class="input" v-model="odUrl" placeholder="https://... 或 magnet:?xt=..." style="width: 100%; user-select: text"
             @keyup.enter="addOffline" />
         </div>
-        <div class="row">
-          <label>文件名（可选，磁力链获取到种子信息后自动命名）</label>
+        <div class="row" v-if="!odIsBt">
+          <label>文件名（可选；留空自动命名，m3u8 视频默认「日期_序号.mp4」）</label>
           <input class="input" v-model="odName" placeholder="默认自动命名" style="width: 100%" @keyup.enter="addOffline" />
         </div>
         <div class="actions" style="margin-top: 10px">
@@ -400,11 +400,17 @@
                   <span class="od-status" :style="t.status === 'error' ? 'color: var(--danger)' : t.status === 'finished' ? 'color: #2e9e5b' : ''">
                     {{ odStatus(t.status) }}{{ t.status === 'processing' ? ' ' + t.progress + '%' : '' }}
                   </span>
-                  <button v-if="t.status === 'queued' || t.status === 'processing'" class="btn" style="padding: 1px 7px; font-size: 11px"
+                  <button v-if="odRunning(t)" class="btn" style="padding: 1px 7px; font-size: 11px"
                     @click="cancelOd(t)">取消</button>
+                  <template v-else>
+                    <button class="btn" style="padding: 1px 7px; font-size: 11px" @click="retryOd(t)">重试</button>
+                    <button class="btn" style="padding: 1px 7px; font-size: 11px" @click="deleteOd(t)">删除</button>
+                  </template>
                 </span>
               </div>
               <div class="progress-track"><div class="progress-fill" :style="{ width: t.progress + '%' }"></div></div>
+              <!-- 阶段提示只在跑动时显示；失败原因只在失败时显示（任务结束后后端会清空 msg） -->
+              <div v-if="odRunning(t) && t.msg" class="od-err" style="color: var(--text-3)">{{ t.msg }}</div>
               <div v-if="t.status === 'error' && t.error" class="od-err" :title="t.error">{{ t.error }}</div>
             </div>
           </div>
@@ -1463,8 +1469,21 @@ async function addOffline() {
   } catch (e: any) { toast.error(e.message) }
 }
 async function cancelOd(t: any) {
+  try { await apost('/offline/' + t.id + '/cancel', {}); loadOdTasks() } catch (e: any) { toast.error(e.message) }
+}
+async function retryOd(t: any) {
+  try { await apost('/offline/' + t.id + '/retry', {}); loadOdTasks() } catch (e: any) { toast.error(e.message) }
+}
+async function deleteOd(t: any) {
+  if (!confirm(`删除任务 #${t.id} 的记录？（已下载好的文件不受影响）`)) return
   try { await adel('/offline/' + t.id); loadOdTasks() } catch (e: any) { toast.error(e.message) }
 }
+function odRunning(t: any) { return t.status === 'queued' || t.status === 'processing' }
+// 磁力链 / .torrent 的最终文件名由种子决定，填了也不生效 → 隐藏文件名输入框
+const odIsBt = computed(() => {
+  const u = odUrl.value.trim().toLowerCase()
+  return u.startsWith('magnet:') || u.endsWith('.torrent')
+})
 function odTaskName(t: any) {
   try { const p = JSON.parse(t.props); return p.rtName || p.name || p.url } catch { return t.props }
 }

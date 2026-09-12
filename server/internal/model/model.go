@@ -274,12 +274,18 @@ type FileVersion struct {
 // ---- 任务队列 / 离线下载 ----
 
 type Task struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	UserID    uint      `json:"userId"`
-	Type      string    `gorm:"size:24" json:"type"`                  // offline | compress | decompress | transfer
-	Status    string    `gorm:"size:16;default:queued" json:"status"` // queued|processing|error|canceled|finished
-	Progress  int       `json:"progress"`                             // 0-100
-	Error     string    `gorm:"size:512" json:"error"`
+	ID       uint   `gorm:"primaryKey" json:"id"`
+	UserID   uint   `json:"userId"`
+	Type     string `gorm:"size:24" json:"type"`                  // offline | m3u8 | bt | compress | decompress
+	Status   string `gorm:"size:16;default:queued" json:"status"` // queued|processing|error|canceled|finished
+	Progress int    `json:"progress"`                             // 0-100
+	// Error 只在失败时写入（失败原因），成功/取消时必须为空。
+	Error string `gorm:"size:512" json:"error"`
+	// Msg 是运行中的阶段提示（"正在合并分片..." 之类），与 Error 严格分开：
+	// 早先阶段消息与失败原因共用 error 列，任务跑完后那一列仍留着最后一句阶段提示，
+	// 前端只能原样显示 → 已完成的任务长期显示"正在合并分片"，看起来像卡死了。
+	// 现在任务一结束就由 run() 清空 Msg，前端也只在 queued/processing 时展示它。
+	Msg       string    `gorm:"size:512" json:"msg"`
 	Props     string    `gorm:"type:text" json:"props"` // JSON 各类型私有字段
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

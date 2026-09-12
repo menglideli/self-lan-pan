@@ -357,7 +357,7 @@
         <div class="row"><label>显示名称</label><input class="input" v-model="editPolicy.name" placeholder="如：电影 / 我的云盘" style="width: 100%" /></div>
         <div class="row">
           <label>本机目录</label>
-          <input class="input" v-model="editPolicy.rootPath" placeholder="如 E:\媒体\电影（也可在文件管理器里点「挂载文件夹」用选择器挑）" style="width: 100%" />
+          <input class="input" v-model="editPolicy.rootPath" placeholder="如 Windows：E:\媒体\电影；Linux / macOS：/data/media（也可在文件管理器里点「挂载文件夹」用选择器挑）" style="width: 100%" />
         </div>
         <div class="ac-guide">
           <b>挂载本机目录：</b>

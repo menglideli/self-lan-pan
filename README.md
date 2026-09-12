@@ -8,7 +8,7 @@
 
 ## 这是什么
 
-CloudPan 是一个用 **Go（Gin + GORM + SQLite）** 和 **Vue 3 + TypeScript + Vite** 写的私有网盘。前端构建产物通过 `go:embed` 打进 Go 二进制，**一个 exe 就能跑** —— 不需要 Docker，不需要额外装数据库。
+CloudPan 是一个用 **Go（Gin + GORM + SQLite）** 和 **Vue 3 + TypeScript + Vite** 写的私有网盘。前端构建产物通过 `go:embed` 打进 Go 二进制，**一个可执行文件就能跑** —— 不需要 Docker，不需要额外装数据库，也不依赖系统运行库。
 
 本项目**基于 [johngko/cloudpan](https://github.com/johngko/cloudpan) 修改而来**，在此向原作者致谢。上游是一个功能完整的通用网盘；本仓库是在它基础上做减法得到的**个人自用版**。
 
@@ -63,22 +63,76 @@ CloudPan 是一个用 **Go（Gin + GORM + SQLite）** 和 **Vue 3 + TypeScript +
 
 **管理控制台**：仪表盘、存储策略、任务监控、站点设置、审计日志
 
-## 快速开始
+## 支持平台
+
+**服务端**（跑 CloudPan 本体的那台机器）—— 纯 Go 实现，SQLite 用的是纯 Go 驱动，**不需要 CGO、不需要 GCC、不依赖系统库**，产出的是单个静态可执行文件：
+
+| 平台 | 架构 | 状态 |
+|---|---|---|
+| Windows 10 / 11 | x64、ARM64 | ✅ 实测编译通过，x64 为本机主平台 |
+| Linux | x64、ARM64、ARMv7 | ✅ 实测编译通过 |
+| macOS | Intel、Apple Silicon | ✅ 实测编译通过 |
+
+**客户端**（访问网盘）—— 任何能打开网页的设备都可以：
+
+- **浏览器**：Windows / macOS / Linux / Android / iOS 上的现代浏览器
+- **WebDAV 客户端**：把 `/dav/` 当网络位置挂载（Windows 资源管理器、macOS Finder、Android 的 Solid Explorer / FolderSync 等）
+
+**关于 iPhone / iPad**：iOS 上**跑不了服务端** —— 系统不允许 App 在后台常驻并监听端口，这是平台本身的限制，换任何语言都一样。iOS 只能当客户端：
+
+- Safari 打开 `http://<内网IP>:18322` 用网页版
+- 或装一个支持 WebDAV 的 App（如 Documents、nPlayer）连 `/dav/`
+- 注意：iOS 自带的「文件」App **不直接支持 WebDAV**，需要第三方 App
+
+本项目只面向"在自己电脑上跑、给自己用"，不为 NAS、路由器、群晖等设备做专门适配。
+
+## 构建与运行
+
+**前置要求**
+
+- **Go 1.27+**（`server/go.mod` 里写的是 `go 1.27.0`）
+- **Node.js 18+**（只在构建前端时需要）
+- 不需要 Docker，也不需要单独装数据库
+
+> 前端产物是用 `go:embed` 打进二进制的，所以**必须先用 Node 构建一次前端**。
+> 如果你 clone 下来直接 `go build`，能编过，但打开网页只会看到一句"前端资源未构建"。
+
+**Windows**
 
 ```bat
-:: Windows（需 Go 1.27+ 与 Node.js 18+）
-build.bat      :: 构建前端并嵌入，产出 server\cloudpan.exe
+build.bat      :: 构建前端 → 嵌入 → 产出 server\cloudpan.exe
 start.bat      :: 启动，浏览器访问 http://localhost:18322
 ```
 
+**Linux / macOS**
+
 ```bash
-# Linux / macOS
-./build.sh && ./server/cloudpan
+./build.sh     # 构建前端 → 嵌入 → 产出 server/cloudpan
+./start.sh     # 启动，浏览器访问 http://localhost:18322
 ```
 
+两个脚本都带可执行位，clone 下来直接跑即可。它们都会先把工作目录切到 `server/` 再启动 —— 这一步不能省：数据目录默认取"当前工作目录下的 `./data`"，从别处启动会得到一套全新的空数据库，界面看起来就像"文件全没了"。
+
+**交叉编译**（可选，给别的机器编，不用换机器）
+
+```bash
+cd server
+CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o cloudpan-linux-x64 .
+CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -o cloudpan-linux-arm64 .
+CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o cloudpan-macos-arm64 .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o cloudpan.exe .
+```
+
+`CGO_ENABLED=0` 是必须的 —— 它保证产出的是**静态**二进制，拷到别的机器直接跑，不挑系统库版本。
+
+**首次运行**
+
 1. 浏览器打开 `http://localhost:18322`
-2. 账号固定 `admin`；**初始密码在首次启动时随机生成，只打印一次到启动日志**，请立刻记下，登录后在 **设置 → 账号** 修改
-3. 打开文件管理器 → 右上角「**挂载文件夹**」→ 选一个本机文件夹 → 确认，回到根视图即可看到它
+2. 账号固定 `admin`；**初始密码在首次启动时随机生成，只打印一次到启动日志**，请立刻记下
+3. 登录后在 **设置 → 账号** 修改密码
+4. 打开文件管理器 → 右上角「**挂载文件夹**」→ 选一个本机文件夹 → 确认，回到根视图即可看到它
+
+> **macOS 提示**：如果二进制是别人编好发给你的，第一次运行可能被 Gatekeeper 拦下，执行 `xattr -d com.apple.quarantine ./cloudpan` 解除即可；自己用 `./build.sh` 编的不会有这个问题。
 
 **截图**
 

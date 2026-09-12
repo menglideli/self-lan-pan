@@ -3,7 +3,7 @@
 ## 定位与约定
 - 自托管私有网盘：Go(Gin + GORM + glebarez/sqlite) 后端 + Vue 3 + TS + Vite + Pinia 前端；`go:embed all:dist` 打进单个 exe（`server/main.go` 显式监听器，端口 18322）。
 - 环境变量：`CP_PORT` / `CP_DATA` / `CP_PUBLIC_URL` / `CP_TRUSTED_PROXIES`。数据目录 `server/data`（DB / secret.key / 回收站 / 上传临时区 / 缩略图）。
-- 构建：`build.bat` = `npm run build` → 拷 `web/dist` → `server/internal/web/dist` → `go build -o cloudpan.exe`。Go 1.27 在 `C:\Program Files\Go`；Node 用 workbuddy 托管版。
+- 构建：`build.bat`（Windows）/ `build.sh`（Linux/macOS）= `npm run build` → 拷 `web/dist` → `server/internal/web/dist` → `go build`；启动脚本是 `start.bat` / `start.sh`（两者都先 `cd` 到 `server/` 再启动）。Go 1.27 在 `C:\Program Files\Go`；Node 用 workbuddy 托管版。**两个 `.sh` 在 git 里必须是 `100755`（有执行位），且 `.gitattributes` 强制 `*.sh eol=lf`** —— 别把这两样改回去，否则 Linux/macOS 用户 clone 下来轻则 `Permission denied`、重则 `/bin/bash^M: bad interpreter`。
 - git：`main` + `origin = github.com/menglideli/self-lan-pan`。`.gitignore` 已忽略 `server/data`、`web/dist`、`server/internal/web/dist/*`（仅保留 `.keep`）、`server/cloudpan.exe`、`C/`、`D/`。
 - **本项目用户画像**：单用户私有部署（只服务内网、只有管理员一个账号）。新会话不要默认它是多用户产品——多用户那套是上游遗留，正在被裁剪。
 
@@ -33,7 +33,15 @@
 - **离线 / m3u8 的产物命名收敛在 `tasks.go`（批次 11）**：`resolveOutName(d, dir, userName, defaultExt)` —— 填了用用户的名字（缺扩展名补 `defaultExt`，含 `/`、`\` 直接 400），没填走 `nextDailyName()` 生成 `YYYYMMDD_NN<ext>`（`NN` = 当天该目录已有最大编号 + 1）。`uniqueFileName()` 保证同名追加 `_1`/`_2` 而不是覆盖。HLS 产物后缀由 `mediaDefaultExt = ".mp4"` 一个常量控制（合并出来的其实是 MPEG-TS，按用户要求统一叫 `.mp4`）。
 - **策略「测通」走 `GET /api/policies/status?policyId=`（`handler/policycheck.go`，批次 11）**：**先 `os.Stat` 再 `List`**。别退回 `fscore.NewLocal` —— 它内部是 `os.MkdirAll`，会把已经被删掉的挂载目录悄悄重建出来再报「目录可读」，是**验证手段自己在制造假通过**。
 
+## 跨平台（批次 12 实测，不是推测）
+- **服务端可运行**：Windows x64/ARM64、Linux x64/ARM64/ARMv7、macOS Intel/Apple Silicon。七个目标在 Windows 上以 `CGO_ENABLED=0` 交叉编译**全部 exit 0**，并**读产物文件头核对**（`PE/COFF` / `ELF` / `Mach-O`，架构分别为 x86-64、ARM64、AArch64、ARM32、x86_64、arm64）。**三个 Linux 产物是 `ET_EXEC` 静态可执行** —— 不依赖 glibc 或 musl，换发行版直接跑。
+- **为什么能跨平台**：SQLite 走 `glebarez/sqlite` → `modernc.org/sqlite` **纯 Go**（无 CGO，这是能出静态二进制的前提）；源码 **0 处** `syscall`、**0 处** `//go:build`、**0 处** `os/user`；`go.mod` 里的 `creack/pty` 是**从未被 import 的残留声明**（终端功能早已裁剪）。已有 `runtime.GOOS` 三处分支本就写了跨平台逻辑：绝对路径/反斜杠校验、Windows 文件名规范化、可浏览根列表（盘符 ↔ `/`）。
+- **iOS 只能当客户端，跑不了服务端**：iOS 不允许 App 后台常驻并监听端口（换任何语言都一样），且 Go 编到 iOS 需要 `CGO_ENABLED=1` + Xcode + 产物必须嵌入 App（gomobile）。iPhone/iPad 用 Safari 网页版，或第三方 WebDAV App（**iOS 自带「文件」App 不直接支持 WebDAV**）。**对外表述不能含糊成"支持 iOS"。**
+- 不为 NAS / 路由器等设备做适配（用户明确不需要）。
+
 ## 构建与验证环境（踩过坑）
+- **沙箱下「我能写」≠「我拉起的子进程能写」**（批次 12）：把 `GOCACHE` / `GOTMPDIR` 指到工作区外的路径时，Go 报 `open ...\_pkg_.a: Access is denied`，而 **PowerShell 自己往同一目录写文件却是成功的**。默认的 `%LOCALAPPDATA%` / `%TEMP%` 可靠；排查这类失败先怀疑路径可写性，别怀疑代码。
+- **磁盘满会伪装成代码缺陷**（批次 12）：`link.exe: resize output file failed: There is not enough space on the disk` 看着像链接器出错，实为本机 C 盘只剩 0.2 GB（Go 构建缓存占了 2.86 GB）。`go clean -cache` 释放约 2.9 GB。**`Get-PSDrive` 的剩余空间读数有延迟** —— 清完立刻读可能显示"释放 0 GB"，别据此判定清理无效（本次就差点误判）。
 - 本机 Go 1.26.3，`go.mod` 要 1.27.0：必须 `export GOPROXY=https://goproxy.cn,direct`（**勿设 `GOSUMDB=off`**，会导致工具链校验失败）。`proxy.golang.org` 不可达。
 - `server/internal/web/dist/.keep` 已就位，后端可单独 `go build ./...`（`go:embed all:dist` 需要该目录非空）。`build.bat` 会先 `rmdir` 整个 dist 再 xcopy，**所以它必须自己重建 `.keep`**（批次 7 补上；`build.sh` 本就有 `touch .keep`）。
 - 本机 **Bash 工具的 PATH 完全失效**（`ls` / `dirname` / `cat` 全 command not found）。一律改用 PowerShell / Read / Grep / Glob。
@@ -97,7 +105,7 @@ README 已于批次 7 按当前功能面重写（双语）：删掉整章《在�
 - 批次 7 ✅：全链路 `build.bat` 通过（exit 0 / `BUILD OK` / 24.7s / exe 61 MB / 嵌入 **134** 个 dist 条目）；用**构建产物本身**跑 `smoke.mjs` **60/60**、`ui.mjs` **22/22**；`start.bat` 语法与首部署日志验证通过；README 按当前功能面重写完成（见上节）。
 - 批次 8 ✅ `3d8676a`：修复用户内网真机反馈的 5 个问题 —— ①空态「挂载文件夹」按钮点不动（根因：`base.css` 的 `.empty-hint` 带 `pointer-events:none`，空态里嵌的按钮被一起禁用）；②进入挂载文件夹后「后退」点了没反应（根因：`pushHistory` 压的是目标路径而非来处）；③管理台新增挂载后文件管理器不刷新（新增 `cp-policies-changed` 广播）；④删管理台「系统更新」页签及全部前端调用（**后端 `/api/admin/update/*` 路由保留**）；⑤离线下载"没下下来"（**后端本就正常**，实测 38MB / 3s 下完并落盘；真因是前端完成后不刷新目录 + 不显示失败原因）。
 - 验证：`smoke.mjs` **60/60**、`ui.mjs` **34/34**（批次 8 新增 12 项）、`probe-all.mjs`（离线下载专项，新）、**4 处反向变异全部命中**（含离线下载变异精确复现了用户现象）。
-- **11 个批次全部完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7，§7.4 = 批次 8，§7.5 = 批次 9，§7.6 = 批次 9 追加，§7.7 = 批次 10，**§7.8 = 批次 11**）。
+- **12 个批次全部完成**，`docs/单用户私有化改造计划.md` 的 §6 状态表全绿（§7.3 = 批次 7，§7.4 = 批次 8，§7.5 = 批次 9，§7.6 = 批次 9 追加，§7.7 = 批次 10，**§7.8 = 批次 11，§7.9 = 批次 12**）。
 - 批次 7 顺手修掉的真问题：① `build.bat` 不重建 `.keep`（先 `rmdir` 整个 dist）→ 空克隆后 `go:embed` 会失败，已补 `type nul > dist\.keep`；② README 的 Go 版本要求写着 `1.22+`（实际 `go.mod` 要 1.27.0）→ 更正为 `1.27+`；③ `start.bat` 注释还写着"默认账号 admin / admin123"（实际首部署是随机密码）→ 已改。
 - 批次 9 ✅：① 删掉系统自更新（`handler/update.go` 整文件 536 行 + 4 条路由 + `UpdateLog` + `main.go` 自重启）；② WebDAV 改为**统一入口 `/dav/`**（列全部本机挂载）+ 单挂载 `/dav/<挂载名>/` + 兼容别名 `/dav/<盘符>/`；顺手修掉 `DavAuth()` 里令 README 写的地址一律 403 的遗留前缀校验。
 - 批次 9 验证：`probe-webdav.mjs` **44/44**（新，含统一根只读/跨挂载拒绝/同名去重/401/编码）、`smoke.mjs` **60/60**、`ui.mjs` **35/35**、`build.bat` 真跑 exit 0 / 23.6 s / exe 64,166,400 B / 嵌入 119；**3 处反向变异全部命中**，其中 1 处（`davWriteFile.Close()` 临时文件残留）是首轮实测真实抓到的缺陷。
@@ -106,3 +114,4 @@ README 已于批次 7 按当前功能面重写（双语）：删掉整章《在�
 - 批次 10 追加 ✅：把"复制链接"入口全部接上 `AddressPicker`（资源管理器提取直链 / 资源管理器分享 / 记事本分享；设置页与管理台先前已接）。教训：**"我以为覆盖了"≠"用户说的那个地方覆盖了"** —— 收尾时要拿用户原话逐字过一遍入口清单。
 - 批次 11 ✅（2026-09-12）：用户真机反馈的 5 件事 —— ①m3u8 产物可自定义命名（缺扩展名自动补 `.mp4`），不填则 `YYYYMMDD_NN.mp4`，同名不覆盖；②修「任务已完成却一直显示正在合并分片」（阶段提示与失败原因拆成 `Msg`/`Error` 两列）；③离线任务**详情面板** + 取消/重试/删除三动作分离；④存储策略收口为**只挂本机目录**（云盘驱动整包删除、4 条 `/api/cloud/*` 路由下线、`PolicyCreate`/`PolicyUpdate` 拒非 `local`）；⑤清理 `docs/test-evidence/`。验证：`probe-m3u8` **48/48**、`probe-offline` **22/22**、`probe-policy` **26/26**（新增），回归 `smoke` 61/61 / `probe-webdav` 45/45 / `probe-phone` 40/40 / `ui` 36/36 / `probe-addr` 27/27 / `probe-scroll` 13/13 / `probe-dav-root` 全 4xx —— **合计 318 条断言全绿**；**4 次反向变异全部精确命中**（其中"成功分支不清 `msg`"那条精确复现了用户症状 `msg="正在合并分片..."`）。详见当日日志。
 - **三项遗留决策已拍板（2026-09-12）：`docs/test-evidence/` 清理；手机端前端不做（走 WebDAV 足够）；媒体中心暂时用不上（保留但不作为动线）。此后不要再把它们当待办。**
+- 批次 12 ✅（2026-09-12）：跨平台支持 —— 七个目标交叉编译全通过 + 逐一读产物文件头核对（`PE/COFF` / `ELF`(ET_EXEC 静态) / `Mach-O`，架构全对）；补 `start.sh`、修 `build.sh` 的 git 可执行位（`100644` → `100755`）、补 `.gitattributes` 行尾规则、前端两处写死 Windows 的文案；README 新增「支持平台」与「构建与运行」两节。回归 **318 条断言全绿**。**三条真缺陷全出在"仓库层"**（执行位 / 行尾规则 / 文案），读 Go 代码一万遍也看不出来 —— 只有站在"别人 clone 下来会怎样"的角度才会暴露。详见当日日志。

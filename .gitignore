@@ -28,5 +28,8 @@ nohup.out
 Thumbs.db
 server/cloudpan-linux
 
+# ---- 本地交叉编译的验证产物（自己编着玩的，不进仓库） ----
+.build-tmp/
+
 # ---- IDE ----
 .trae/

@@ -9,6 +9,16 @@
 > 每次更新推送时在此追加条目（中文 + 英文），最新在上。
 > Every release appends entries here (Chinese + English), newest first.
 
+### 2026-09-12（跨平台：Linux / macOS 实测编译通过 + 补齐打包与运行说明）
+
+- **服务端跨平台是"实测编出来"的，不是"理论上可以"**：在 Windows 上以 `CGO_ENABLED=0` 交叉编译，七个目标全部 exit 0，并**读取产物文件头逐一核对**（不依赖文件名）—— `windows/amd64`、`windows/arm64` 为 `PE/COFF`，架构 x86-64 / ARM64；`linux/amd64`、`linux/arm64`、`linux/arm` 为 `ELF`，架构 x86-64 / AArch64 / ARM(32-bit)，且均为 **ET_EXEC 静态可执行**（不依赖 glibc 或 musl，换发行版直接跑）；`darwin/amd64`、`darwin/arm64` 为 `Mach-O` x86_64 / arm64。其中 `linux/arm`、`darwin/amd64`、`darwin/arm64` 另经 `go vet` 全通过。
+- **为什么能跨平台**：SQLite 用的是纯 Go 驱动（`glebarez/sqlite` → `modernc.org/sqlite`），BT / SFTP / 图片解码等依赖在 `CGO_ENABLED=0` 下都有非 CGO 路径，因此**不需要 GCC** 就能编出静态二进制。源码里没有 `syscall`、没有 `//go:build` 平台特化文件、没有 `os/user`；已有的三处 `runtime.GOOS` 分支（绝对路径与路径分隔符校验、Windows 文件名规范化、可浏览根列表）本就是跨平台写法。
+- **修「Linux 用户 clone 下来跑不了构建脚本」**：`build.sh` 在 git 里被记录成 `100644`（无执行位），macOS / Linux 上 `./build.sh` 直接 `Permission denied`。已用 `git update-index --chmod=+x` 改成 `100755`，并新增 **`start.sh`**（Linux / macOS 启动脚本，与 `start.bat` 行为对齐：先 `cd` 到 `server/` 再启动 —— 数据目录默认取"当前工作目录下的 `./data`"，从别处启动会得到一套空数据库和一把新 `secret.key`，界面看起来就像"文件全没了"）。
+- **补 `.gitattributes` 行尾约束**：原先只有 `* text=auto`，它管住了提交方向、没管 checkout 方向。而 `core.autocrlf` 是**每个开发者本地配置、仓库层面管不住**的 —— 只要有人在 Linux（`autocrlf=false`）提交一个 CRLF 的 `.sh`，此后所有 Linux / macOS 用户 clone 下来执行都会报 `/bin/bash^M: bad interpreter`。现显式声明 `*.sh text eol=lf`、`*.bat` / `*.cmd text eol=crlf`，与各人本地配置无关。
+- **前端两处平台文案**：挂载对话框的路径占位符原写死 `如 E:\媒体\电影`，非 Windows 用户看着莫名其妙，改为并列给出 `Windows：E:\媒体\电影；Linux / macOS：/data/media`；文件管理器目录选择器原写「点进下面任意一个盘符 / 目录」，改为「点进下面任意一项（Windows 是盘符，Linux / macOS 是 /）」。
+- **README 新增「支持平台」与「构建与运行」两节**：平台表把"服务端"与"客户端"分开讲；明确 **iOS 跑不了服务端**（系统不允许 App 在后台常驻并监听端口，是平台本身的限制，换任何语言都一样），iPhone / iPad 只能当客户端（Safari 网页版，或第三方 WebDAV App —— iOS 自带「文件」App **不直接支持 WebDAV**）；写清四个脚本的用法、交叉编译命令与 `CGO_ENABLED=0` 的必要性、首次运行步骤、以及 macOS 上被 Gatekeeper 拦下时的 `xattr` 处理。也写明本项不为 NAS / 路由器等设备做专门适配。
+- **勘误记录**：本次交叉编译过程中一度出现 `linux/arm` / `darwin` 目标失败，报 `Access is denied` / `There is not enough space on the disk`。经核实**均与代码无关** —— 前者是把 Go 临时目录指到了沙箱不可写的路径，后者是本机 C 盘只剩 0.2 GB。改用可写路径并清理 Go 构建缓存后全部目标一次通过；最终以 `go vet` + `go build` 双重确认代码本身没有问题。
+
 ### 2026-09-12（真机反馈 5 件事：m3u8 命名 / 残留提示 / 任务详情重试删除 / 存储策略收口 / 测试证据清理）
 
 - **m3u8 下载的文件名现在能自己定，不填也有合理默认**：离线对话框与任务中心都新增「文件名」输入框（BT 磁力任务不显示 —— 它落的是一整个种子目录，起名没有意义）。规则收敛到 `resolveOutName()` 一处：填了就按你的名字（没写扩展名自动补 `.mp4`；含 `/`、`\` 直接 400 拒绝，不会把文件写到别的目录去）；没填则自动命名 **`YYYYMMDD_NN.mp4`**（`NN` = 当天该目录下已有的最大编号 + 1，从 `_01` 起、两位补零、超 99 自然进位）。产物扩展名统一 `.mp4`（此前 HLS 合并出来的是 `.ts`，Windows 上不少播放器不认；VLC / PotPlayer / mpv 按内容识别，不受影响）。

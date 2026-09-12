@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# 脚本行尾：仓库级锁定，不依赖各人本地的 core.autocrlf。
+# core.autocrlf 只是"每个人自己电脑上的配置"，仓库层面管不住它——
+# 若谁在 Linux 上（autocrlf=false）把 CRLF 的脚本提交进来，
+# 之后所有 Linux/macOS 用户 clone 下来执行都会报
+# "/bin/bash^M: bad interpreter: No such file or directory"。
+*.sh  text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

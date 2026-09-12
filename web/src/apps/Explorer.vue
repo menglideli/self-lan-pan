@@ -218,7 +218,7 @@
         </div>
         <div class="row">
           <label>要挂载的本机文件夹</label>
-          <div class="mount-path">{{ mountPath || '点进下面任意一个盘符 / 目录' }}</div>
+          <div class="mount-path">{{ mountPath || '点进下面任意一项（Windows 是盘符，Linux / macOS 是 /）' }}</div>
         </div>
         <div class="mount-browser">
           <div class="mount-crumbs">

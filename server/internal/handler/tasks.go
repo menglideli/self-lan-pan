@@ -38,24 +38,35 @@ type TaskPool struct {
 
 var pool *TaskPool
 
-func InitTaskPool(svc *fscore.Service, btDir string) {
-	pool = &TaskPool{Svc: svc, BtDir: btDir, meds: make(chan struct{}, 3), opts: map[uint]bool{}}
+// InitTaskPool 初始化任务池。
+//
+// btDir / zipTmp 必须都传进来：前者是 BT 的数据目录，后者是 m3u8 分片与压缩临时区。
+// 早先只传了 btDir，Zips 一直是空串 —— 后果是 runCompress 的临时压缩包落在
+// "当前工作目录"（相对路径），以及缓存清扫完全跳过 ziptmp。
+func InitTaskPool(svc *fscore.Service, btDir, zipTmp string) {
+	pool = &TaskPool{Svc: svc, Zips: zipTmp, BtDir: btDir, meds: make(chan struct{}, 3), opts: map[uint]bool{}}
+	// 先把上次异常退出留下的下载缓存清掉，再恢复未完成任务 ——
+	// 顺序不能反：resume() 起的执行体会往 bt_tmp/<id> 写数据，
+	// 先清扫会把它当成"不属于活跃任务"的残留删掉。
+	pool.sweepTaskCaches()
 	pool.resume()
 	go pool.sweepLoop()
 }
 
-// sweepLoop 定期清扫：孤儿上传分片 + 回收站超期项（每 6 小时）
+// sweepLoop 定期清扫：离线下载缓存 + 孤儿上传分片 + 回收站超期项（每 6 小时）
 //
 // 注意：这里曾经有一个 sweepGuestWorkspace（游客 24h 临时工作区清理），它会按 mtime
 // 物理删除策略根下的文件且不进回收站。单用户私有部署下挂载根就是真实目录，该任务
 // 会直接删用户的数据，故已彻底移除，不要重新引入任何"按时间自动物理删除挂载目录"
 // 的清理逻辑。
 func (p *TaskPool) sweepLoop() {
+	p.sweepTaskCaches()
 	p.sweepUploads()
 	fscore.PruneAll()
 	p.sweepRecycle()
 	t := time.NewTicker(6 * time.Hour)
 	for range t.C {
+		p.sweepTaskCaches()
 		p.sweepUploads()
 		fscore.PruneAll()
 		p.sweepRecycle()
@@ -153,16 +164,24 @@ func (p *TaskPool) run(t *model.Task) {
 	if p.cancelled(t.ID) {
 		// 取消后阶段提示必须清掉，否则界面会留着"正在下载分片 x/y"这类已经失效的文案
 		model.DB.Model(t).Updates(map[string]interface{}{"status": "canceled", "msg": ""})
+		// 取消也照样清缓存：执行体可能是被超时/外部因素打断的，
+		// 不能只依赖它自己的 defer（异常路径下 defer 不会执行）
+		p.purgeTaskCache(t.ID)
 		return
 	}
 	if err != nil {
 		// 失败：error 写原因；msg 里最后一条阶段提示保留（详情里能看到停在哪一步）
 		model.DB.Model(t).Updates(map[string]interface{}{"status": "error", "error": err.Error()})
+		// 失败同样清缓存：不给"失败任务留一堆下了一半的数据"的机会
+		p.purgeTaskCache(t.ID)
 		Notify(t.UserID, "task", "任务失败", taskTypeName(t.Type)+"任务失败："+truncateRunes(err.Error(), 200), t.ID)
 		return
 	}
 	// 成功：error/msg 都必须为空 —— 这里曾漏清 msg，导致任务已完成但界面仍显示"正在合并分片"
 	model.DB.Model(t).Updates(map[string]interface{}{"status": "finished", "progress": 100, "error": "", "msg": ""})
+	// 成功后清缓存（兜底：各执行体本应自己 defer 清干净，这里是双保险，
+	// 保证"下完就导入、导入完就收摊"这个用户预期在任何分支下都成立）
+	p.purgeTaskCache(t.ID)
 	Notify(t.UserID, "task", "任务完成", taskTypeName(t.Type)+"任务完成："+taskTargetName(t), t.ID)
 }
 
@@ -323,8 +342,10 @@ func (p *TaskPool) runOffline(t *model.Task) error {
 	if err != nil {
 		return err
 	}
-	// 先落临时文件，边下边报进度
-	tmpPath := path.Join(os.TempDir(), "cp_offline_"+fmt.Sprint(t.ID)+".tmp")
+	// 先落临时文件，边下边报进度。
+	// 路径统一走 offlineTmpPath()：清扫器（sweepTaskCaches）按同一命名规则回收残留，
+	// 两边各写一份字符串就会漂。
+	tmpPath := offlineTmpPath(t.ID)
 	f, err := os.Create(tmpPath)
 	if err != nil {
 		return err
@@ -827,6 +848,10 @@ func (h *OfflineHandler) Cancel(c *gin.Context) {
 	pool.cancel(id)
 	// msg 一并清掉：取消后界面不该再挂着"正在下载分片 x/y"这类已失效的阶段文案
 	model.DB.Model(&t).Updates(map[string]interface{}{"status": "canceled", "msg": ""})
+	// 取消即清缓存：用户按了取消，就不该再为这个任务占着磁盘。
+	// 执行体自己也会在退出前清一次（它下一轮循环看到取消标记会返回），
+	// 这里是"立刻生效"的那一下，避免用户看着磁盘迟迟不降。
+	pool.purgeTaskCache(id)
 	dto.OK(c, nil)
 }
 
@@ -861,10 +886,13 @@ func (h *OfflineHandler) Retry(c *gin.Context) {
 	dto.OK(c, t)
 }
 
-// Delete 删除任务记录（仅限已结束的任务）。
+// Delete 删除任务记录（仅限已结束的任务），同时清掉它在磁盘上的下载缓存。
 //
 // 进行中的任务不给删：执行体还在跑，删了记录它照样会把文件写进网盘
 //（用户以为删了却冒出个文件）。要先取消再删除。
+//
+// 清理缓存这条曾经缺失：早先只删 DB 记录，用户按了删除却发现 bt_tmp / ziptmp /
+// %TEMP% 下的中间数据原封不动 —— 这就是"删除也不会删除缓存，这样会越来越大"。
 func (h *OfflineHandler) Delete(c *gin.Context) {
 	x := ctxOf(c)
 	id := parseUintParam(c, "id")
@@ -882,6 +910,9 @@ func (h *OfflineHandler) Delete(c *gin.Context) {
 		dto.Fail(c, 500, "删除失败："+err.Error())
 		return
 	}
+	// 记录删掉之后再清缓存：先删记录、后删文件，中途失败最多留一点缓存，
+	// 不会出现"文件没了但任务还在"这种更糟的状态。
+	pool.purgeTaskCache(t.ID)
 	middleware.Audit(c, "offline", fmt.Sprintf("删除任务 #%d (%s)", t.ID, t.Type))
 	dto.OK(c, nil)
 }

@@ -71,7 +71,7 @@ func main() {
 	r.MaxMultipartMemory = 64 << 20
 
 	site := &handler.SiteHandler{Cfg: cfg, Fs: fsService(cfg), ZipTmp: cfg.Sub("ziptmp")}
-	handler.InitTaskPool(site.Fs, cfg.Sub("bt_tmp"))
+	handler.InitTaskPool(site.Fs, cfg.Sub("bt_tmp"), cfg.Sub("ziptmp"))
 	// 站点设置里的运行时开关同步一次（如"离线下载是否允许访问内网地址"）
 	handler.ApplySSRFSetting(handler.GetSiteSettings())
 	handler.Setup(r, cfg, site)

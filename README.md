@@ -167,6 +167,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o cloudpan.exe .
 | `CP_TRUSTED_PROXIES` | 空 | 部署在反向代理之后时声明代理网段（逗号分隔 CIDR/IP）。默认**不信任任何** `X-Forwarded-For` |
 
 - 数据目录默认跟着二进制走（源码树里是 `server/data/`，交付包里是 `out/data/`），里面有 `cloudpan.db`、`cloudpan.db-wal`、`cloudpan.db-shm`、`secret.key`、`recycle/`、`uploads/`、`thumbs/`。**备份请把这几样一起拷** —— 只拷 `cloudpan.db` 会丢掉最近的事务。最省心的做法是**把 `out/` 整个拷走**，程序和数据就都带上了
+- **下载缓存的清理**：离线下载（直链 / BT / m3u8）的中间数据放在 `data/bt_tmp/`、`data/ziptmp/` 与系统临时目录（`%TEMP%` 或 `/tmp`）下的 `cp_offline_*.tmp`。任务完成、失败、取消、删除时都会清；程序启动时与每 6 小时还会**再清一次**，兜住上次异常退出（强杀 / 断电 / 崩溃）留下的残留。清扫只认程序自己的命名规则，**同一个字都不会碰你挂载目录里的文件**。若想手工腾地方，删掉 `data/bt_tmp/`、`data/ziptmp/` 里的内容即可（`ziptmp` 里 `m3u8-*`、`bt_tmp` 里纯数字目录都是可安全删除的缓存）
 - **开机自启**：Windows 用 NSSM 注册成服务（`nssm install CloudPan <完整路径>\cloudpan.exe`，并在 `AppEnvironmentExtra` 里给 `CP_DATA` 一个绝对路径）；Linux 用 systemd，`Restart=always`
 - **开发模式**：`cd web && npm install && npm run dev`（Vite 5173，`/api` 代理到 18322）；另开一个终端 `cd server && go run .`
 - 历史改动记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)

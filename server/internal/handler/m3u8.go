@@ -613,9 +613,13 @@ func (p *TaskPool) runM3U8Task(t *model.Task, props m3u8Props, preloaded, preloa
 		return err
 	}
 
-	// 分片落临时目录，全部完成后按序合并
-	tmpDir, err := os.MkdirTemp(p.Zips, "m3u8-")
-	if err != nil {
+	// 分片落临时目录，全部完成后按序合并。
+	// 目录名带任务 ID（而不是纯随机）：这样"取消/删除这个任务"时能准确定位并清掉它，
+	// 不必靠"当前有没有活跃 m3u8 任务"这种粗粒度判断去扫整个 ziptmp。
+	// 先清一次同名残留（上次异常退出留下的），避免新旧分片混在一起。
+	tmpDir := m3u8TmpDirOf(p.Zips, t.ID)
+	_ = os.RemoveAll(tmpDir)
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return fmt.Errorf("创建临时目录失败: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)

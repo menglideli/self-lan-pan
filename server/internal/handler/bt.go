@@ -28,6 +28,29 @@ type btProps struct {
 	Peers    int    `json:"peers,omitempty"`
 }
 
+// btListenPortOffset BT 监听端口的分配基数。
+//
+// anacrolix 客户端的默认 ListenPort 是 42069，而每个 BT 任务都会新建一个客户端 ——
+// 于是第二个并发 BT 任务必然撞端口，直接报
+// "first listen: listen tcp4 :42069: bind: Only one usage of each socket address"。
+// 实测抓到（见 docs 单用户私有化改造计划 §7.11）。
+// 这里按「任务 ID 取模」散列到一个端口段里，把并发任务之间错开；
+// 真撞上了也只是那个任务失败并在 error 里说明，不会影响别的任务。
+const (
+	btListenPortBase = 42300
+	btListenPortSpan = 500
+)
+
+// btListenPortOf 为某个任务算一个监听端口
+func btListenPortOf(taskID uint) int {
+	return btListenPortBase + int(taskID%btListenPortSpan)
+}
+
+// btDataDir BT 任务的数据目录（与 cache.go 的 btTaskDir 同一规则）
+func (p *TaskPool) btDataDir(taskID uint) string {
+	return p.btTaskDir(taskID)
+}
+
 // runBT BT/磁力链离线下载：纯 Go torrent 客户端（DHT+tracker），完成后导入网盘
 func (p *TaskPool) runBT(t *model.Task) error {
 	var props btProps
@@ -43,13 +66,15 @@ func (p *TaskPool) runBT(t *model.Task) error {
 		return err
 	}
 
-	dataDir := filepath.Join(p.BtDir, fmt.Sprint(t.ID))
+	dataDir := p.btDataDir(t.ID)
 	_ = os.MkdirAll(dataDir, 0o755)
 	defer os.RemoveAll(dataDir)
 
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DataDir = dataDir
 	cfg.NoUpload = true
+	// 每个任务用不同端口，避免并发 BT 任务撞 42069（默认值）
+	cfg.ListenPort = btListenPortOf(t.ID)
 	client, err := torrent.NewClient(cfg)
 	if err != nil {
 		return fmt.Errorf("BT 客户端启动失败: %w", err)
@@ -131,7 +156,19 @@ waitInfo:
 	}
 	tr.DownloadAll()
 
-	// 进度循环
+	// 进度循环。
+	//
+	// 这里必须带「停滞超时」：早先只有 `if total > 0 && done >= total { break }`，
+	// 意味着只要下载始终不完成（拿不到 peer、对方不做种、tracker 全挂），
+	// 这个 goroutine 就会永远 2 秒一轮地空转，任务在界面上永远停在"下载中 0%"，
+	// 而 bt_tmp/<id> 一直占着磁盘 —— 用户看到的就是"BT 下不动、缓存还不删"。
+	// 实测复现：本机做种 + 下载端连不上 peer 时，任务 90 秒后仍在 processing（见 §7.11）。
+	//
+	// 规则：连续 btStallTimeout 长时间（a）进度没有任何增长，就判失败并说明原因。
+	// 进度有增长则重新计时，正常下载再慢也不会被误杀。
+	const btStallTimeout = 5 * time.Minute
+	lastDone := int64(-1)
+	lastProgressAt := time.Now()
 	for {
 		if p.cancelled(t.ID) {
 			return fmt.Errorf("已取消")
@@ -140,18 +177,28 @@ waitInfo:
 		if total > 0 {
 			p.setProgress(t.ID, int(done*100/total))
 		}
-		props.Seeds = tr.Stats().ConnectedSeeders
-		props.Peers = tr.Stats().ActivePeers
+		st := tr.Stats()
+		props.Seeds = st.ConnectedSeeders
+		props.Peers = st.ActivePeers
 		p.saveProps(t.ID, props)
 		if total > 0 && done >= total {
 			break
+		}
+		if done != lastDone {
+			lastDone = done
+			lastProgressAt = time.Now()
+		} else if time.Since(lastProgressAt) > btStallTimeout {
+			return fmt.Errorf("下载停滞超过 %d 分钟：已连接 peer %d / seed %d，累计下载 %dMB / %dMB。"+
+				"常见原因：① 没有可用做种者（该资源已无人做种），② 出站 TCP/UDP 被网络策略限制，"+
+				"③ tracker 均不可达且 DHT 被禁用。",
+				int(btStallTimeout.Minutes()), st.ActivePeers, st.ConnectedSeeders, done>>20, total>>20)
 		}
 		time.Sleep(2 * time.Second)
 	}
 
 	// 导入网盘：单文件种子 → dest/<种子名>；多文件种子 → dest/<种子名>/<目录结构>
 	// 注意 anacrolix API：f.Path() = "种子名/相对路径"（含前缀），DisplayPath() 才是纯相对路径；
-	// 文件存储物理布局 = dataDir/<info.Name>/<相对路径>（单文件时 = dataDir/<info.Name>）
+	// 文件存储物理布局 = dataDir/<info.Name>/<相对路径>（单文件时 = dataDir/<info.Name>）。
 	files := tr.Files()
 	var imported int64 // 已导入字节数（配额记账）
 	defer p.accountQuota(t, &imported)
@@ -166,35 +213,43 @@ waitInfo:
 		}
 		return d.CreateFile(vp, src)
 	}
-	if len(files) == 1 {
-		singleFile := files[0]
-		// 单文件种子：尝试多种物理路径（兼容不同种子制作工具）
-		candidates := []string{
-			filepath.Join(dataDir, singleFile.DisplayPath()),
-			filepath.Join(dataDir, info.Name),
+	// resolvePhys 在 dataDir 下按几种常见物理布局找文件。
+	//
+	// 为什么要试多种：不同种子制作工具/不同版本写出的目录层级并不统一。
+	// 早先只按 info.Name 拼一次，找不到就直接报错返回 —— 而 run() 收到 error 后
+	// 任务判失败，紧接着 defer os.RemoveAll(dataDir) 会把**刚刚下好的数据全删掉**。
+	// 用户看到的现象正是"明明下好了，却没进网盘"，同时缓存也"消失"了（被 defer 删的）。
+	resolvePhys := func(rel string) string {
+		rel = filepath.FromSlash(rel)
+		cands := []string{
+			filepath.Join(dataDir, info.Name, rel), // 标准：dataDir/<种子名>/<相对路径>
+			filepath.Join(dataDir, rel),            // 扁平：dataDir/<相对路径>
+			filepath.Join(dataDir, filepath.Base(rel)),
 		}
-		if singleFile.DisplayPath() != info.Name {
-			candidates = append(candidates, filepath.Join(dataDir, info.Name, singleFile.DisplayPath()))
-		}
-		var phys string
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				phys = c
-				break
+		for _, c := range cands {
+			if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+				return c
 			}
 		}
+		return ""
+	}
+
+	if len(files) == 1 {
+		singleFile := files[0]
+		// 单文件种子：DisplayPath() 在单文件种子下就等于种子名（见 anacrolix file.go 注释），
+		// 物理布局 = dataDir/<DisplayPath>。
+		rel := singleFile.DisplayPath()
+		phys := resolvePhys(rel)
 		if phys == "" {
-			return fmt.Errorf("单文件种子物理路径未找到: 搜索 %v", candidates)
+			return fmt.Errorf("单文件种子物理路径未找到（种子名 %q，相对路径 %q，数据目录 %s）", info.Name, rel, dataDir)
 		}
-		vp, jerr := fscore.Join(props.Dest, singleFile.DisplayPath())
+		vp, jerr := fscore.Join(props.Dest, rel)
 		if jerr != nil {
 			return jerr
 		}
-		if ierr := importOne(vp, phys); ierr != nil {
-			return ierr
-		}
-		return nil
+		return importOne(vp, phys)
 	}
+
 	rootVP, err := fscore.Join(props.Dest, props.RTName)
 	if err != nil {
 		return err
@@ -211,10 +266,14 @@ waitInfo:
 		if jerr != nil {
 			continue
 		}
+		phys := resolvePhys(rel)
+		if phys == "" {
+			return fmt.Errorf("种子内文件物理路径未找到（相对路径 %q，数据目录 %s）", rel, dataDir)
+		}
 		if derr := p.mkdirChain(d, path.Dir(vp)); derr != nil {
 			return derr
 		}
-		if ierr := importOne(vp, filepath.Join(dataDir, info.Name, filepath.FromSlash(rel))); ierr != nil {
+		if ierr := importOne(vp, phys); ierr != nil {
 			return ierr
 		}
 	}

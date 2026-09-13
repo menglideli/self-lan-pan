@@ -22,6 +22,10 @@ D/
 *.log
 *.zip
 *.tmp
+*.rar
+*.7z
+*.tar
+*.tar.gz
 nohup.out
 
 # ---- IDE / 本地状态 ----

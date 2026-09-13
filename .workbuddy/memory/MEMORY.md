@@ -93,5 +93,5 @@
 ## 进度与测试基线
 - 14 个批次全部完成（详细见 `docs/单用户私有化改造计划.md` §6/§7）：1 删游客清理+关用户隔离 / 2 删注册·用户管理·用户组·站内共享 / 3 只留 win12 主题 / 4 删 7 个应用 / 5 挂载根视图去盘符 / 6 新增「挂载文件夹」+ 目录浏览器 / 7 全链路构建与 README 重写 / 8 修真机 5 问题 / 9 删自更新 + WebDAV 统一入口 / 10 滚动修复 + m3u8 + 多网卡地址 / 11 任务 Msg-Error 拆列 + 三动作分离 + 存储策略收口 / 12 跨平台 / 13 装配 `out/` + 启动脚本自适应 / 14 下载缓存治理 + BT 三缺陷。
 - 桌面只剩：此电脑 / 回收站 / 记事本 / 任务中心 / 应用中心 / 设置 / 管理控制台（媒体中心 installable）。apps 只剩 10 个 key。
-- **测试基线（任何改动后应复跑）**：`smoke` 61 / `probe-policy` 26 / `probe-m3u8` 48 / `probe-offline` 22 / `probe-webdav` 45 / `probe-phone` 40 / `ui` 36 / `probe-addr` 27 / `probe-scroll` 13 = **318 条全绿**；`probe-dav-root` exit 0。探针在 `%TEMP%\cp-verify2\`。批次 14 新增 `probe-regress.mjs` **12/12**（`.build-tmp/`）。
-- 待用户拍板：`.workbuddy/` 是否公开（内含对话原话与运维隐患）；LICENSE 是否追加自己版权行；是否 push 到 origin（`main` 领先 origin 3 个提交：`d0e78a0`、`8175dd7`、批次 14 那次）。
+- **测试基线（任何改动后应复跑）**：`smoke` 60 / `probe-policy` 26 / `probe-m3u8` 48 / `probe-offline` 22 / `probe-webdav` 44 / `probe-phone` 40 / `ui` 35 / `probe-addr` 27 / `probe-scroll` 13 = **315 条全绿**（批次 14 复跑实测）；`probe-dav-root` exit 0。探针在 `%TEMP%\cp-verify2\`。批次 14 新增 `probe-regress.mjs` **12/12**（`.build-tmp/`）。
+- 待用户拍板：`.workbuddy/` 是否公开（内含对话原话与运维隐患）；LICENSE 是否追加自己版权行；是否 push 到 origin（`main` 领先 origin 4 个提交：`d0e78a0`、`8175dd7`、`38131d4`(批次 14)、以及更早一条）。**`server/server.rar`（170MB，用户手工快照，含真实 data/）已在 `.gitignore` 覆盖范围内，未删除，等用户处置。**

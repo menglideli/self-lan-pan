@@ -9,3 +9,6 @@
 *.sh  text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# 交付包里的说明文件是给 Windows 用户双击/记事本打开的，用 CRLF 最稳
+packaging/README.txt text eol=crlf

@@ -3,6 +3,9 @@ tools/
 web/node_modules/
 
 # ---- 构建产物（build.bat / build.sh 生成） ----
+# out/ 是交付目录，装配出的可执行文件在这里。构建脚本故意不删除它 ——
+# 用户可能已经把 out/ 当部署目录跑过，里面会有真实的 data/。绝不能提交。
+out/
 web/dist/
 server/internal/web/dist/*
 !server/internal/web/dist/.keep

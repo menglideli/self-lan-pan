@@ -100,18 +100,31 @@ CloudPan 是一个用 **Go（Gin + GORM + SQLite）** 和 **Vue 3 + TypeScript +
 **Windows**
 
 ```bat
-build.bat      :: 构建前端 → 嵌入 → 产出 server\cloudpan.exe
+build.bat      :: 构建前端 → 嵌入 → 装配出 out\ 交付目录
 start.bat      :: 启动，浏览器访问 http://localhost:18322
 ```
 
 **Linux / macOS**
 
 ```bash
-./build.sh     # 构建前端 → 嵌入 → 产出 server/cloudpan
+./build.sh     # 构建前端 → 嵌入 → 装配出 out/ 交付目录
 ./start.sh     # 启动，浏览器访问 http://localhost:18322
 ```
 
-两个脚本都带可执行位，clone 下来直接跑即可。它们都会先把工作目录切到 `server/` 再启动 —— 这一步不能省：数据目录默认取"当前工作目录下的 `./data`"，从别处启动会得到一套全新的空数据库，界面看起来就像"文件全没了"。
+构建完得到 `out/` 目录 —— **这就是要拿走的全部东西**，不用再从别处东拼西凑：
+
+```
+out/
+├── cloudpan.exe       主程序（Linux/macOS 下是 cloudpan），前端已打进这一个文件
+├── start.bat          启动脚本（Windows 双击）
+├── start.sh           启动脚本（Linux/macOS）
+├── README.txt         使用说明：数据在哪、怎么备份、怎么换端口
+└── LICENSE            MIT 许可
+```
+
+把这个文件夹整个拷到目标机器就能跑，`data/` 会在第一次启动时自动生成在旁边。以后要重新构建，直接再跑一次脚本即可 —— **它不会删掉 `out/data/`**（那里可能已经是你真实的数据了）。
+
+两个启动脚本都带可执行位，clone 下来直接跑即可。它们会先自己找到二进制所在目录再启动（源码树里找 `server/`，交付包里就在同级）—— 这一步不能省：数据目录默认取"当前工作目录下的 `./data`"，从别处启动会得到一套全新的空数据库，界面看起来就像"文件全没了"。
 
 **交叉编译**（可选，给别的机器编，不用换机器）
 
@@ -123,7 +136,7 @@ CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o cloudpan-macos-arm64 .
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o cloudpan.exe .
 ```
 
-`CGO_ENABLED=0` 是必须的 —— 它保证产出的是**静态**二进制，拷到别的机器直接跑，不挑系统库版本。
+`CGO_ENABLED=0` 是必须的 —— 它保证产出的是**静态**二进制，拷到别的机器直接跑，不挑系统库版本。编出来的文件直接覆盖 `out/` 里的主程序即可（Windows 下文件名必须是 `cloudpan.exe`，其他平台是 `cloudpan`），启动脚本会自己找到它。
 
 **首次运行**
 
@@ -153,7 +166,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o cloudpan.exe .
 | `CP_PUBLIC_URL` | `http://localhost:<端口>` | 对外可达地址 |
 | `CP_TRUSTED_PROXIES` | 空 | 部署在反向代理之后时声明代理网段（逗号分隔 CIDR/IP）。默认**不信任任何** `X-Forwarded-For` |
 
-- 数据目录默认 `server/data/`，里面有 `cloudpan.db`、`cloudpan.db-wal`、`cloudpan.db-shm`、`secret.key`、`recycle/`、`uploads/`、`thumbs/`。**备份请把这几样一起拷** —— 只拷 `cloudpan.db` 会丢掉最近的事务
+- 数据目录默认跟着二进制走（源码树里是 `server/data/`，交付包里是 `out/data/`），里面有 `cloudpan.db`、`cloudpan.db-wal`、`cloudpan.db-shm`、`secret.key`、`recycle/`、`uploads/`、`thumbs/`。**备份请把这几样一起拷** —— 只拷 `cloudpan.db` 会丢掉最近的事务。最省心的做法是**把 `out/` 整个拷走**，程序和数据就都带上了
 - **开机自启**：Windows 用 NSSM 注册成服务（`nssm install CloudPan <完整路径>\cloudpan.exe`，并在 `AppEnvironmentExtra` 里给 `CP_DATA` 一个绝对路径）；Linux 用 systemd，`Restart=always`
 - **开发模式**：`cd web && npm install && npm run dev`（Vite 5173，`/api` 代理到 18322）；另开一个终端 `cd server && go run .`
 - 历史改动记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)

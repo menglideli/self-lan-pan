@@ -102,12 +102,14 @@
           <h2 style="font-size: 19px; margin-bottom: 20px">我的分享</h2>
           <div class="ac-sub">外链分享</div>
           <table class="file-list" style="position: static">
-            <thead><tr><th>名称</th><th>提取码</th><th>浏览/下载</th><th>到期</th><th>操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>提取码</th><th>浏览/下载</th><th>状态</th><th>到期</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="s in shares" :key="s.id">
                 <td>{{ s.name }}</td>
-                <td>{{ s.passwordHash ? '有密码' : '公开' }}</td>
+                <td>{{ s.hasPassword ? '有密码' : '公开' }}</td>
                 <td>{{ s.views }} / {{ s.downloads }}</td>
+                <!-- 已过期 / 次数用完 的分享仍然列出（记录要留着），但一眼能看出它已经打不开了 -->
+                <td :style="{ color: s.available ? 'var(--text-2)' : 'var(--text-3)' }">{{ shareStateName(s.state) }}</td>
                 <td>{{ s.expiresAt ? new Date(s.expiresAt).toLocaleDateString() : '永久' }}</td>
                 <td>
                   <button class="tool-btn" style="padding: 3px 8px" @click="copyShare(s)">复制链接</button>
@@ -322,8 +324,12 @@ function copyDav(a: LanAddr) {
 const sharePickerShow = ref(false)
 const sharePickerPath = ref('')
 function copyShare(s: any) {
-  sharePickerPath.value = '/#/s/' + s.token + (s.passwordHash ? '  提取码见分享设置' : '')
+  sharePickerPath.value = '/#/s/' + s.token
   sharePickerShow.value = true
+}
+// 分享状态文案：与后端 model.Share.State() 的取值一一对应
+function shareStateName(st: string) {
+  return (({ active: '生效中', expired: '已过期', exhausted: '次数用完' } as any)[st] || '生效中')
 }
 async function cancelShare(s: any) {
   try { await shareApi.cancel(s.id); loadShares() } catch (e: any) { alert(e.message) }

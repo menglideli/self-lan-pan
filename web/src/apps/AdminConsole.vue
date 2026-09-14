@@ -153,18 +153,28 @@
 
         <!-- 分享审计 -->
         <template v-else-if="tab === 'shares'">
-          <div class="ac-head"><h2 class="ac-h2">分享审计</h2></div>
+          <div class="ac-head">
+            <h2 class="ac-h2">分享审计</h2>
+            <div class="ac-sub" style="font-size: 12.5px; color: var(--text-3)">
+              生效中 {{ shareActiveCount }} · 已失效 {{ allShares.length - shareActiveCount }}
+            </div>
+          </div>
           <div class="ac-card" style="padding: 4px 0">
             <table class="ac-table">
-              <thead><tr><th>文件</th><th>分享者</th><th>提取码</th><th>浏览/下载</th><th>到期</th><th style="width: 90px">操作</th></tr></thead>
+              <thead><tr><th>文件</th><th>分享者</th><th>提取码</th><th>浏览/下载</th><th>状态</th><th>到期</th><th style="width: 150px">操作</th></tr></thead>
               <tbody>
-                <tr v-for="s in allShares" :key="s.id">
+                <tr v-for="s in allShares" :key="s.id" :style="{ opacity: s.available ? 1 : 0.55 }">
                   <td class="ac-strong" style="max-width: 220px; overflow: hidden; text-overflow: ellipsis">{{ s.name }}{{ s.isDir ? ' (目录)' : '' }}</td>
                   <td>{{ s.owner }} ({{ s.ownerName }})</td>
                   <td>{{ s.hasPassword ? '有' : '无' }}</td>
                   <td>{{ s.views }} / {{ s.downloads }}</td>
+                  <!-- 失效的分享仍然列出（审计要看得到），但一眼能分辨；它们也不再阻止卸载挂载 -->
+                  <td><span class="ac-status" :class="s.available ? 'active' : 'disabled'"><span class="ac-dot" :class="{ off: !s.available }"></span>{{ shareStateName(s.state) }}</span></td>
                   <td>{{ s.expiresAt ? new Date(s.expiresAt).toLocaleDateString() : '永久' }}</td>
-                  <td><button class="btn danger" style="padding: 4px 10px" @click="adminDelShare(s)">取消</button></td>
+                  <td>
+                    <button class="btn danger" style="padding: 4px 10px" @click="adminDelShare(s)">取消</button>
+                    <button v-if="!s.available" class="btn" style="padding: 4px 10px" title="清掉这一条已失效的记录" @click="adminDelShare(s, true)">清记录</button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -454,6 +464,8 @@ function fmtBytes(n: number) {
 
 const policies = ref<any[]>([])
 const allShares = ref<any[]>([])
+// 生效中的分享条数（已过期/次数用完的不算）：它们才会阻止卸载挂载
+const shareActiveCount = computed(() => allShares.value.filter(s => s.available).length)
 const tasks = ref<any[]>([])
 const logs = ref<any[]>([])
 const logPage = ref(1)
@@ -524,6 +536,8 @@ function typeName(t: string) {
 }
 function taskTypeName(t: string) { return ({ offline: 'HTTP 离线', m3u8: 'm3u8 视频', bt: 'BT/磁力链', compress: '压缩', decompress: '解压', transfer: '转存' } as any)[t] || t }
 function taskStatusName(s: string) { return ({ queued: '排队中', processing: '执行中', finished: '完成', error: '失败', canceled: '已取消' } as any)[s] || s }
+// 分享状态文案：与后端 model.Share.State() 的取值一一对应
+function shareStateName(st: string) { return (({ active: '生效中', expired: '已过期', exhausted: '次数用完' } as any)[st] || '生效中') }
 function notifTypeName(t: string) { return ({ task: '任务', quota: '配额', system: '系统', offline: '离线下载' } as any)[t] || t }
 function fmt(n: number) {
   if (!n) return '-'
@@ -583,8 +597,8 @@ async function saveSettings() {
     toast.success('设置已保存')
   } catch (e: any) { toast.error(e.message) }
 }
-async function adminDelShare(s: any) {
-  if (!(await uiDlg.confirm('取消分享', `取消分享「${s.name}」？外链将立即失效。`, { danger: true, okText: '取消分享' }))) return
+async function adminDelShare(s: any, quiet = false) {
+  if (!quiet && !(await uiDlg.confirm('取消分享', `取消分享「${s.name}」？外链将立即失效。`, { danger: true, okText: '取消分享' }))) return
   try { await adminApi.shareDelete(s.id); loadAll() } catch (e: any) { toast.error(e.message) }
 }
 </script>

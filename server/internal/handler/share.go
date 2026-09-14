@@ -113,11 +113,29 @@ func (h *ShareHandler) Create(c *gin.Context) {
 	dto.OK(c, sh)
 }
 
+// Mine 我发起的外链分享。
+//
+// 注意不能直接回 model.Share：PasswordHash 带 json:"-"，前端读 passwordHash 永远是
+// undefined，于是"提取码"一列恒显示「公开」—— 有密码的分享被误标成公开的（已修）。
+// 这里统一给出 hasPassword 与 state（active/expired/exhausted），与分享审计同一套判据。
 func (h *ShareHandler) Mine(c *gin.Context) {
 	x := ctxOf(c)
 	var items []model.Share
 	model.DB.Where("user_id = ?", x.user.ID).Order("created_at DESC").Find(&items)
-	dto.OK(c, items)
+	out := make([]gin.H, 0, len(items))
+	for _, s := range items {
+		st := s.State()
+		out = append(out, gin.H{
+			"id": s.ID, "name": s.Name, "isDir": s.IsDir, "token": s.Token,
+			"hasPassword": s.PasswordHash != "", "views": s.Views, "downloads": s.Downloads,
+			"allowDownload": s.AllowDownload, "previewEnabled": s.PreviewEnabled,
+			"encrypted": s.Encrypted, "encSalt": s.EncSalt,
+			"expiresAt": s.ExpiresAt, "remainDownloads": s.RemainDownloads,
+			"createdAt": s.CreatedAt,
+			"state":     st, "available": st == model.ShareStateActive,
+		})
+	}
+	dto.OK(c, out)
 }
 
 func (h *ShareHandler) Cancel(c *gin.Context) {

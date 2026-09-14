@@ -225,14 +225,39 @@ type Share struct {
 }
 
 func (s *Share) Available() bool {
+	return s.State() == ShareStateActive
+}
+
+// 分享状态取值。active 是唯一"外链还能打开"的状态，其余两个都是"已经废了"：
+//   - expired   ：已过到期时间
+//   - exhausted ：下载次数已用完（RemainDownloads == 0）
+const (
+	ShareStateActive    = "active"
+	ShareStateExpired   = "expired"
+	ShareStateExhausted = "exhausted"
+)
+
+// State 分享的当前状态（对外展示 + "是否仍在生效"的唯一判据）。
+//
+// 为什么要单独一个方法：早先"能不能访问"（Available）与"能不能卸载挂载"
+// （admin.PolicyDelete 数关联分享）用的是两套判据 —— 后者直接 count 全部分享，
+// 于是一条早就过期的分享会把挂载**永久锁死**：界面看不出它已失效，卸载又总被
+// 「存在关联分享，请先取消」挡住。现在两边共用这一个判据。
+func (s *Share) State() string {
 	if s.ExpiresAt != nil && time.Now().After(*s.ExpiresAt) {
-		return false
+		return ShareStateExpired
 	}
 	if s.RemainDownloads == 0 {
-		return false
+		return ShareStateExhausted
 	}
-	return true
+	return ShareStateActive
 }
+
+// ShareActiveCond 与 Share.State() == active 等价的 SQL 条件。
+//
+// 一定要与 State() 保持同义，否则会出现"列表显示已过期、卸载却被拦"这种自相矛盾。
+// 用法：Model(&Share{}).Where("policy_id = ?", id).Where(ShareActiveCond, time.Now()).Count(&n)
+const ShareActiveCond = "(expires_at IS NULL OR expires_at > ?) AND remain_downloads <> 0"
 
 // ---- 回收站 / 收藏 ----
 

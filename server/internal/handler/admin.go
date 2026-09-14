@@ -224,21 +224,35 @@ func (h *AdminHandler) PolicyToggle(c *gin.Context) {
 	dto.OK(c, p)
 }
 
+// PolicyDelete 卸载挂载。
+//
+// 仍然会拦住"还有外链在生效"的情况：那种分享被访问时会去查这条策略，
+// 策略一删分享立刻变成坏链，用户不如先取消分享。
+//
+// 但**已失效的分享（已过期 / 下载次数用完）不再阻止卸载** —— 它们本来就打不开了，
+// 却因为这里直接 count 全部分享，把挂载永久锁死：界面上看不出哪条已废，
+// 卸载永远返回「存在关联分享，请先取消」。记录按要求保留（审计要看得到），
+// 只是不再挡路。判据与 model.Share.State() 共用 ShareActiveCond，别各写一套。
 func (h *AdminHandler) PolicyDelete(c *gin.Context) {
 	var p model.Policy
 	if err := model.DB.First(&p, c.Param("id")).Error; err != nil {
 		dto.Fail(c, 404, "策略不存在")
 		return
 	}
-	var n int64
-	model.DB.Model(&model.Share{}).Where("policy_id = ?", p.ID).Count(&n)
-	if n > 0 {
-		dto.Fail(c, 400, "存在关联分享，请先取消")
+	var active, dead int64
+	model.DB.Model(&model.Share{}).Where("policy_id = ?", p.ID).
+		Where(model.ShareActiveCond, time.Now()).Count(&active)
+	model.DB.Model(&model.Share{}).Where("policy_id = ?", p.ID).Count(&dead)
+	dead -= active
+	if active > 0 {
+		dto.Fail(c, 400, fmt.Sprintf("还有 %d 个分享正在生效，请先取消（已过期/已用完的 %d 个不影响卸载）", active, dead))
 		return
 	}
 	model.DB.Delete(&p)
 	h.Site.Fs.Invalidate(p.ID)
-	middleware.Audit(c, "admin", "卸载存储 "+p.Name)
+	// 该挂载下已失效的分享记录保留（审计需要），但它们的策略已不存在，
+	// 访问时 loadShare 会因"已过期/次数用完"直接拒绝，不会变成可用的坏链。
+	middleware.Audit(c, "admin", fmt.Sprintf("卸载存储 %s（连带 %d 条已失效分享记录）", p.Name, dead))
 	dto.OK(c, nil)
 }
 
@@ -391,6 +405,10 @@ func (h *AdminHandler) TaskList(c *gin.Context) {
 }
 
 // ShareAudit 全站分享审计
+//
+// 每条都带 state（active/expired/exhausted）：已失效的分享仍然列出（审计要看得到），
+// 但前端要能一眼分辨 —— 早先没有任何状态字段，过期的分享和正常的分享长得一模一样，
+// 用户既看不出它已经废了，也不知道为什么卸载挂载被拒。
 func (h *AdminHandler) ShareAudit(c *gin.Context) {
 	var in dto.PageIn
 	_ = c.ShouldBindQuery(&in)
@@ -408,10 +426,15 @@ func (h *AdminHandler) ShareAudit(c *gin.Context) {
 	for _, s := range items {
 		var u model.User
 		model.DB.Select("username", "nickname").First(&u, s.UserID)
+		st := s.State()
 		out = append(out, gin.H{
 			"id": s.ID, "name": s.Name, "isDir": s.IsDir, "owner": u.Nickname, "ownerName": u.Username,
 			"hasPassword": s.PasswordHash != "", "views": s.Views, "downloads": s.Downloads,
 			"allowDownload": s.AllowDownload, "expiresAt": s.ExpiresAt, "createdAt": s.CreatedAt,
+			"remainDownloads": s.RemainDownloads,
+			// state 是唯一的状态判据（与"能否访问""能否卸载挂载"共用）：
+			// available 保留一个布尔，方便前端直接绑样式
+			"state": st, "available": st == model.ShareStateActive,
 		})
 	}
 	dto.OK(c, dto.PageOut{Total: total, Items: out})
